@@ -11,7 +11,9 @@ define('CC_ERR_FILE', getenv('CC_ERR_FILE') ?: '/home/fpp/media/logs/fpp-car-cou
 function cc_schema() {
     return array(
         'show_name'         => array('str', 'My Light Show', 80),
-        'serial_port'       => array('str', '/dev/serial0', 120),
+        'connection'        => array('choice', 'usb', array('usb', 'gpio', 'custom')),
+        'usb_device'        => array('str', '', 120),
+        'serial_port'       => array('str', '', 120),
         'baud'              => array('choice', 115200, array(9600, 19200, 38400, 57600, 115200, 230400)),
         'unit'              => array('choice', 'cm', array('cm', 'mm')),
         'min_cm'            => array('int', 30, array(1, 5000)),
@@ -91,6 +93,13 @@ function cc_config() {
     }
     if ($out['max_cm'] <= $out['min_cm']) $out['max_cm'] = $out['min_cm'] + 10;
     $out['wp_url'] = rtrim($out['wp_url'], '/');
+    if ($raw === null || !array_key_exists('connection', $raw)) {   // config saved before the option existed
+        $sp = ($raw !== null && isset($raw['serial_port'])) ? trim((string)$raw['serial_port']) : '';
+        if ($sp === '') { $out['connection'] = 'usb'; }
+        elseif ($sp === '/dev/serial0') { $out['connection'] = 'gpio'; }
+        elseif (preg_match('#^/dev/(ttyUSB|ttyACM|serial/by-id)#', $sp)) { $out['connection'] = 'usb'; if (!isset($raw['usb_device'])) $out['usb_device'] = $sp; }
+        else { $out['connection'] = 'custom'; }
+    }
     if ($raw !== null && isset($raw['schedules']) && is_array($raw['schedules'])) {
         $out['schedules'] = cc_coerce_schedules($raw['schedules']);
     } else {   // older config (single window) or fresh install: one entry for every day
@@ -116,6 +125,21 @@ function cc_save_config($changes) {
     if (file_put_contents($tmp, json_encode($cfg)) === false) return false;
     @chmod($tmp, 0600);
     return rename($tmp, CC_DATA_DIR . '/config.json');
+}
+
+/* USB serial adapters, best first (CP210x / Silicon Labs ahead of anything else). Mirrors list_usb_ports() in the daemon. */
+function cc_usb_ports() {
+    $ports = array();
+    foreach (glob('/dev/serial/by-id/*') ?: array() as $p) $ports[] = array('path' => $p, 'label' => basename($p));
+    if (!$ports) {
+        foreach (array_merge(glob('/dev/ttyUSB*') ?: array(), glob('/dev/ttyACM*') ?: array()) as $p) $ports[] = array('path' => $p, 'label' => $p);
+    }
+    usort($ports, function ($a, $b) {
+        $ra = (stripos($a['path'], 'cp210') !== false || stripos($a['path'], 'silicon_labs') !== false) ? 0 : 1;
+        $rb = (stripos($b['path'], 'cp210') !== false || stripos($b['path'], 'silicon_labs') !== false) ? 0 : 1;
+        return $ra - $rb;
+    });
+    return $ports;
 }
 
 function cc_status() {

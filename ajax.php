@@ -66,11 +66,13 @@ switch ($action) {
         cc_out(array('log' => cc_tail(CC_LOG_FILE, 200), 'errors' => cc_tail(CC_ERR_FILE, 30)));
 
     case 'ports':
-        $ports = array();
-        foreach (array('/dev/serial0', '/dev/ttyAMA*', '/dev/ttyS0', '/dev/ttyUSB*', '/dev/ttyACM*') as $pat) {
-            foreach (glob($pat) ?: array() as $p) $ports[] = $p;
-        }
-        cc_out(array_values(array_unique($ports)));
+        cc_out(array(
+            'usb'  => cc_usb_ports(),
+            'gpio' => file_exists('/dev/serial0'),
+            'all'  => array_values(array_unique(array_merge(
+                glob('/dev/serial0') ?: array(), glob('/dev/ttyAMA*') ?: array(), glob('/dev/ttyS0') ?: array(),
+                glob('/dev/ttyUSB*') ?: array(), glob('/dev/ttyACM*') ?: array()))),
+        ));
 
     case 'csv':
         $st = cc_read_json(CC_RUN_DIR . '/stats.json');

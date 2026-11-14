@@ -30,23 +30,38 @@ Then reload the FPP page: **Status/Control → Car Counter**.
 **Option B – FPP Plugin Manager (recommended)**: in *Content Setup → Plugin Manager* paste
 `https://raw.githubusercontent.com/baelinc/lidar_counter_fpp/main/pluginInfo.json` and click *Retrieve Plugin Info*, then *Install*.
 
-## Wiring (3.3 V logic – connects directly to the Pi)
-| Sensor wire | Pi pin |
+## Wiring – choose one
+In the plugin's **Sensor & Schedule** tab, set *How is the lidar connected?* to match. The page shows the matching wiring table.
+
+### Option 1 – USB-to-serial adapter (CP2102 etc.) – easiest, recommended
+No serial-port setup, no reboot, and no conflict with LED-panel HATs. Plug the adapter into any USB port on the Pi.
+
+| Lidar wire | Adapter pin |
+|---|---|
+| Red (5 V) | 5V |
+| Black (GND) | GND |
+| Green (lidar TX) | RXD |
+| White (lidar RX) | TXD |
+
+The data wires **cross over** (lidar TX → adapter RXD). Power the lidar from the adapter's 5V pin; the data signals are 3.3 V, so if your adapter has a 3.3V/5V logic selector, choose 3.3V. The plugin auto-detects the adapter (a CP210x is preferred if several USB serial devices are plugged in) and recovers by itself if it is unplugged and plugged back in.
+
+### Option 2 – Pi GPIO header pins
+| Lidar wire | Pi pin |
 |---|---|
 | Red (5 V) | 2 (5 V) |
 | Black (GND) | 6 (GND) |
-| Green (sensor TX) | 10 (GPIO15 / RXD) |
-| White (sensor RX) | 8 (GPIO14 / TXD) |
-
-*Check your sensor's datasheet – wire colours vary by model.*
-If an LED‑panel HAT/bonnet uses those GPIO pins, use a **USB‑to‑serial adapter** instead and choose `/dev/ttyUSB0`.
+| Green (lidar TX) | 10 (GPIO15 / RXD) |
+| White (lidar RX) | 8 (GPIO14 / TXD) |
 
 First time using the GPIO serial port? Run once and reboot:
 `sudo /home/fpp/media/plugins/lidar_counter_fpp/scripts/enable_uart.sh`
-(backs up `config.txt`/`cmdline.txt`, enables the UART and frees it from the login console). Then use `/dev/serial0`.
+(backs up `config.txt`/`cmdline.txt`, enables the UART and frees it from the login console).
+If an LED-panel HAT/bonnet uses those GPIO pins, use Option 1 instead.
+
+*Wire colours vary between sensor models – check your sensor's datasheet.* *Custom serial port* (advanced) lets you type any device path.
 
 ## Set‑up
-1. **Sensor & Schedule tab** – check serial port/baud (115200 is the factory default), build your show schedule (one entry per set of days with the same hours; *Every day / Weekdays / Weekends* shortcuts help) and save.
+1. **Sensor & Schedule tab** – pick how the lidar is connected and check the baud rate (115200 is the factory default), build your show schedule (one entry per set of days with the same hours; *Every day / Weekdays / Weekends* shortcuts help) and save.
 2. Aim the sensor across the lane the cars use at about bumper height, so an empty road reads *no return* (or something far away).
 3. Dashboard → **Test mode**, drive/walk past, watch the live bar and the *test cars* counter. Adjust *Confirm time* (raise it to ignore people/animals).
 4. With the road clear, press **Calibrate empty road** – it sets *Farthest distance* just inside whatever the sensor sees as background.
@@ -73,7 +88,8 @@ Uninstalling the plugin keeps your counts; delete the config folder to remove th
 
 ## Troubleshooting
 * **"Service: not running"** – Log tab → Start. Crash output appears under the log.
-* **"cannot open /dev/serial0: No such file"** – run `enable_uart.sh` and reboot, or pick the right port (the box suggests the ports it finds).
+* **"no USB serial adapter found"** – plug the adapter into the Pi (try another port or cable), then reload the page; the plugin picks it up within seconds.
+* **"cannot open /dev/serial0: No such file"** (GPIO option) – run `enable_uart.sh` and reboot.
 * **"Permission denied"** – the `fpp` user must be in group `dialout` (the installer does this; reboot or re‑login after).
 * **"no data from sensor"** – wiring TX/RX swapped, wrong baud, or sensor not powered (it needs 5 V).
 * **Counts in the dark but not in daylight** – sunlight can blind these sensors; shade the lens.

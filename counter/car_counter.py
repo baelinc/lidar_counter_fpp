@@ -11,6 +11,7 @@ Written for Python 3.7+ (FPP images ship 3.9 - 3.11).
 """
 import datetime
 import fcntl
+import glob
 import hashlib
 import hmac
 import json
@@ -88,7 +89,9 @@ BAUDS = {
 # str -> (maxlen,)
 SCHEMA = {
     "show_name": ("str", "My Light Show", 80),
-    "serial_port": ("str", "/dev/serial0", 120),
+    "connection": ("choice", "usb", ["usb", "gpio", "custom"]),   # how the lidar is wired to the Pi
+    "usb_device": ("str", "", 120),                                # "" = auto-detect the USB adapter
+    "serial_port": ("str", "", 120),                               # only used when connection == "custom"
     "baud": ("choice", 115200, list(BAUDS.keys())),
     "unit": ("choice", "cm", ["cm", "mm"]),
     "min_cm": ("int", 30, 1, 5000),
@@ -169,10 +172,49 @@ def coerce_schedules(value):
     return out
 
 
+def list_usb_ports(root="/dev"):
+    """USB serial adapters, best first. Prefers the stable /dev/serial/by-id names and
+    puts Silicon Labs CP210x (CP2102) adapters ahead of any other USB serial device."""
+    ports = sorted(glob.glob(os.path.join(root, "serial", "by-id", "*")))
+    if not ports:
+        ports = sorted(glob.glob(os.path.join(root, "ttyUSB*"))) + sorted(glob.glob(os.path.join(root, "ttyACM*")))
+    ports.sort(key=lambda p: 0 if ("cp210" in p.lower() or "silicon_labs" in p.lower()) else 1)
+    return ports
+
+
+def resolve_port(cfg, root="/dev"):
+    """Serial device to open for this configuration, or None if there is nothing to open yet."""
+    mode = cfg["connection"]
+    if mode == "gpio":
+        return "/dev/serial0"
+    if mode == "usb":
+        found = list_usb_ports(root)
+        if cfg["usb_device"] and (cfg["usb_device"] in found or os.path.exists(cfg["usb_device"])):
+            return cfg["usb_device"]
+        return found[0] if found else None
+    return cfg["serial_port"] or None
+
+
+def infer_connection(raw):
+    """Configs saved before the connection option existed only had serial_port."""
+    port = str(raw.get("serial_port", "")).strip()
+    if not port:
+        return "usb", ""
+    if port == "/dev/serial0":
+        return "gpio", ""
+    if port.startswith(("/dev/ttyUSB", "/dev/ttyACM", "/dev/serial/by-id")):
+        return "usb", port
+    return "custom", ""
+
+
 def normalize_config(raw):
     cfg = {}
     for key, spec in SCHEMA.items():
         cfg[key] = coerce(key, raw[key]) if key in raw else spec[1]
+    if "connection" not in raw:
+        cfg["connection"], guessed = infer_connection(raw)
+        if guessed and "usb_device" not in raw:
+            cfg["usb_device"] = guessed
     if isinstance(raw.get("schedules"), list):
         cfg["schedules"] = coerce_schedules(raw["schedules"])
     else:  # older config (single window) or fresh install: one entry for every day
@@ -618,6 +660,7 @@ class Daemon:
         self.strength = 0
         self.sensor_ok = False
         self.sensor_error = "not opened"
+        self.port_name = None
 
         self.test_mode = False
         self.test_count = 0
@@ -653,12 +696,23 @@ class Daemon:
 
     # ---- serial ----------------------------------------------------------
     def ensure_serial(self, now):
-        want = (self.cfg["serial_port"], self.cfg["baud"])
+        port = resolve_port(self.cfg)
+        want = (port, self.cfg["baud"])
         if self.fd is not None and self.port_open != want:
             self.close_serial()
         if self.fd is not None:
             return
         if now < self.next_open_try:
+            return
+        self.port_name = port
+        if port is None:
+            self.next_open_try = now + 3
+            msg = ("no USB serial adapter found - plug it in" if self.cfg["connection"] == "usb"
+                   else "no serial port selected")
+            if msg != self.sensor_error:
+                log.error(msg)
+            self.sensor_error = msg
+            self.sensor_ok = False
             return
         try:
             self.fd = open_serial(*want)
@@ -883,7 +937,8 @@ class Daemon:
             "sensor": {
                 "ok": self.sensor_ok,
                 "error": self.sensor_error,
-                "port": self.cfg["serial_port"],
+                "port": self.port_name,
+                "connection": self.cfg["connection"],
                 "distance_cm": None if self.dist_cm is None else round(self.dist_cm, 1),
                 "strength": self.strength,
                 "fps": round(fps, 1),

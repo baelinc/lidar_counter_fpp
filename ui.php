@@ -112,11 +112,30 @@ $ccPlugin = basename(__DIR__);
 
   <!-- ===================== Settings ===================== -->
   <div id="tab-settings" style="display:none">
-    <div class="panel"><h3>Wiring (TFmini / TFmini-S / TFmini Plus / TF-Luna)</h3>
-      <div class="help" style="opacity:.9">
-        Red → 5V (pin 2) &nbsp;·&nbsp; Black → GND (pin 6) &nbsp;·&nbsp; Green (sensor TX) → Pi RX, GPIO15 (pin 10) &nbsp;·&nbsp; White (sensor RX) → Pi TX, GPIO14 (pin 8).<br>
-        Using a USB-to-serial adapter instead? Choose <code>/dev/ttyUSB0</code> – this avoids any conflict with LED panel HATs that use the GPIO header.<br>
+    <div class="panel" id="wireUsb"><h3>Wiring – USB-to-serial adapter (CP2102)</h3>
+      <table class="t" style="max-width:420px"><thead><tr><th>Lidar wire</th><th>Adapter pin</th></tr></thead><tbody>
+        <tr><td>Red (5 V power)</td><td>5V</td></tr>
+        <tr><td>Black (ground)</td><td>GND</td></tr>
+        <tr><td>Green (lidar TX)</td><td>RXD</td></tr>
+        <tr><td>White (lidar RX)</td><td>TXD</td></tr>
+      </tbody></table>
+      <div class="help" style="opacity:.9;margin-top:.5rem">
+        The data wires cross over: the lidar's TX goes to the adapter's RXD, and the lidar's RX to the adapter's TXD.
+        Plug the adapter into any USB port on the Pi – no serial-port setup and no reboot needed.
+        Power the lidar from the adapter's <strong>5V</strong> pin (it needs 5 V; its data signals are 3.3 V). If your adapter has a 3.3V/5V logic selector, choose 3.3V.
+        Wire colours differ between sensor models – check your datasheet.
+      </div>
+    </div>
+    <div class="panel" id="wireGpio" style="display:none"><h3>Wiring – Pi GPIO header</h3>
+      <table class="t" style="max-width:420px"><thead><tr><th>Lidar wire</th><th>Pi pin</th></tr></thead><tbody>
+        <tr><td>Red (5 V power)</td><td>Pin 2 (5V)</td></tr>
+        <tr><td>Black (ground)</td><td>Pin 6 (GND)</td></tr>
+        <tr><td>Green (lidar TX)</td><td>Pin 10 (GPIO15 / RXD)</td></tr>
+        <tr><td>White (lidar RX)</td><td>Pin 8 (GPIO14 / TXD)</td></tr>
+      </tbody></table>
+      <div class="help" style="opacity:.9;margin-top:.5rem">
         First time using the GPIO serial port? Run <code>sudo /home/fpp/media/plugins/<?php echo htmlspecialchars($ccPlugin); ?>/scripts/enable_uart.sh</code> over SSH once and reboot.
+        If an LED-panel HAT or bonnet uses these GPIO pins, use a USB-to-serial adapter instead.
       </div>
     </div>
     <div class="panel"><h3>Sensor</h3><div id="fSensor"></div></div>
@@ -185,7 +204,9 @@ $ccPlugin = basename(__DIR__);
   var FIELDS = {
     fSensor: [
       { k: 'show_name', l: 'Show name', t: 'text', h: 'Shown on your website.' },
-      { k: 'serial_port', l: 'Serial port', t: 'text', list: 'ccPorts', h: '/dev/serial0 for the GPIO pins, or /dev/ttyUSB0 for a USB-serial adapter.' },
+      { k: 'connection', l: 'How is the lidar connected?', t: 'select', o: [['usb', 'USB-to-serial adapter (CP2102 etc.) – easiest'], ['gpio', 'Pi GPIO header pins'], ['custom', 'Custom serial port (advanced)']], h: 'A USB adapter needs no serial-port setup and avoids conflicts with LED-panel HATs.' },
+      { k: 'usb_device', l: 'USB adapter', t: 'select', o: [['', 'Auto-detect (recommended)']], h: 'Only change this if you have more than one USB serial device plugged in.' },
+      { k: 'serial_port', l: 'Serial port', t: 'text', list: 'ccPorts', h: 'Full device path, e.g. /dev/ttyAMA1.' },
       { k: 'baud', l: 'Baud rate', t: 'select', o: [9600, 19200, 38400, 57600, 115200, 230400], h: 'TFmini, TFmini-S, TFmini Plus and TF-Luna all default to 115200.' },
       { k: 'unit', l: 'Sensor distance unit', t: 'select', o: [['cm', 'Centimetres (factory default)'], ['mm', 'Millimetres']], h: 'Only change if you switched the sensor into millimetre output.' }
     ],
@@ -260,13 +281,33 @@ $ccPlugin = basename(__DIR__);
     (cfg.schedules || []).forEach(function (e) { ed.appendChild(schedRow(e)); });
     schedEmptyNote();
   }
+  var portInfo = { usb: [], gpio: false, all: [] };
+  function populateUsb() {
+    var sel = $('cf_usb_device'), cur = cfg ? cfg.usb_device : sel.value;
+    sel.textContent = '';
+    function opt(v, t) { var o = document.createElement('option'); o.value = v; o.textContent = t; sel.appendChild(o); }
+    opt('', portInfo.usb.length ? 'Auto-detect (recommended)' : 'Auto-detect (none plugged in yet)');
+    portInfo.usb.forEach(function (p) { opt(p.path, p.label); });
+    if (cur && !portInfo.usb.some(function (p) { return p.path === cur; })) opt(cur, cur + ' (not detected)');
+    sel.value = cur || '';
+    var n = $('usbDetected');
+    if (portInfo.usb.length) { n.textContent = 'Detected: ' + portInfo.usb[0].label + (portInfo.usb.length > 1 ? ' (+' + (portInfo.usb.length - 1) + ' more)' : ''); n.className = 'msg ok'; }
+    else { n.textContent = 'No USB serial adapter detected. Plug it into a USB port on the Pi, then reload this page.'; n.className = 'msg bad'; }
+  }
+  function applyConnection() {
+    var m = $('cf_connection').value;
+    $('row_usb_device').style.display = (m === 'usb') ? '' : 'none';
+    $('row_serial_port').style.display = (m === 'custom') ? '' : 'none';
+    $('wireUsb').style.display = (m === 'usb') ? '' : 'none';
+    $('wireGpio').style.display = (m === 'gpio') ? '' : 'none';
+  }
   function applyModeVisibility() {
     var f = $('schedField'); if (f) f.style.display = ($('cf_schedule_mode').value === 'window') ? '' : 'none';
   }
   function buildForm(boxId) {
     var box = $(boxId);
     FIELDS[boxId].forEach(function (f) {
-      var row = document.createElement('div'); row.className = 'field';
+      var row = document.createElement('div'); row.className = 'field'; row.id = 'row_' + f.k;
       var lab = document.createElement('label'); lab.textContent = f.l; lab.htmlFor = 'cf_' + f.k;
       var cell = document.createElement('div'), inp;
       if (f.t === 'schedules') {
@@ -303,6 +344,8 @@ $ccPlugin = basename(__DIR__);
   }
   ['fSensor', 'fDetect', 'fSched', 'fWebsite'].forEach(buildForm);
   $('cf_schedule_mode').addEventListener('change', applyModeVisibility);
+  $('cf_connection').addEventListener('change', applyConnection);
+  (function () { var n = document.createElement('div'); n.id = 'usbDetected'; n.className = 'msg'; $('row_usb_device').lastChild.appendChild(n); })();
   var dl = document.createElement('datalist'); dl.id = 'ccPorts'; $('cc').appendChild(dl);
 
   function fillForms() {
@@ -315,6 +358,8 @@ $ccPlugin = basename(__DIR__);
         else el.value = cfg[f.k];
       });
     });
+    populateUsb();
+    applyConnection();
     applyModeVisibility();
   }
   function collect(boxes) {
@@ -483,7 +528,11 @@ $ccPlugin = basename(__DIR__);
 
   $('csvLink').href = AJAX + '&action=csv';
   api('config').then(function (c) { cfg = c; fillForms(); });
-  api('ports').then(function (p) { dl.textContent = ''; p.forEach(function (x) { var o = document.createElement('option'); o.value = x; dl.appendChild(o); }); });
+  api('ports').then(function (p) {
+    portInfo = p; dl.textContent = '';
+    (p.all || []).forEach(function (x) { var o = document.createElement('option'); o.value = x; dl.appendChild(o); });
+    populateUsb();
+  });
   refreshStats(); refresh();
   setInterval(refresh, 1000);
   setInterval(refreshStats, 15000);

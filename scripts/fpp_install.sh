@@ -19,5 +19,5 @@ fi
 
 "$DIR/scripts/service.sh" restart
 echo "Car Counter installed. Open Status/Control > Car Counter to configure it."
-echo "If you use the Pi's GPIO serial pins, run:  sudo $DIR/scripts/enable_uart.sh  (then reboot)"
+echo "Using a USB-to-serial adapter? Nothing else to do. Using the Pi's GPIO pins instead? Run:  sudo $DIR/scripts/enable_uart.sh  (then reboot)"
 exit 0

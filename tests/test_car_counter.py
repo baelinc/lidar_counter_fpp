@@ -183,6 +183,59 @@ class MultiScheduleTests(unittest.TestCase):
         self.assertTrue(self.on(2026, 11, 18, 19, 0, cfg))
 
 
+class ConnectionTests(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.root)
+
+    def touch(self, *parts):
+        path = os.path.join(self.root, *parts)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        open(path, "w").close()
+        return path
+
+    def cfg(self, **kw):
+        return cc.normalize_config(kw)
+
+    def test_gpio_always_uses_serial0(self):
+        self.assertEqual(cc.resolve_port(self.cfg(connection="gpio"), self.root), "/dev/serial0")
+
+    def test_usb_not_plugged_in(self):
+        self.assertIsNone(cc.resolve_port(self.cfg(connection="usb"), self.root))
+
+    def test_usb_autodetect_prefers_stable_by_id_name(self):
+        self.touch("ttyUSB0")
+        by_id = self.touch("serial", "by-id", "usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0")
+        self.assertEqual(cc.resolve_port(self.cfg(connection="usb"), self.root), by_id)
+
+    def test_usb_falls_back_to_ttyusb(self):
+        p = self.touch("ttyUSB0")
+        self.assertEqual(cc.resolve_port(self.cfg(connection="usb"), self.root), p)
+
+    def test_cp2102_is_preferred_over_other_usb_serial_devices(self):
+        self.touch("serial", "by-id", "usb-FTDI_DMX_Adapter_A1-if00-port0")
+        cp = self.touch("serial", "by-id", "usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0")
+        self.assertEqual(cc.resolve_port(self.cfg(connection="usb"), self.root), cp)
+
+    def test_chosen_usb_device_wins_over_autodetect(self):
+        self.touch("ttyUSB0")
+        other = self.touch("ttyUSB1")
+        self.assertEqual(cc.resolve_port(self.cfg(connection="usb", usb_device=other), self.root), other)
+
+    def test_custom_uses_serial_port_field(self):
+        self.assertEqual(cc.resolve_port(self.cfg(connection="custom", serial_port="/dev/ttyAMA1"), self.root), "/dev/ttyAMA1")
+        self.assertIsNone(cc.resolve_port(self.cfg(connection="custom"), self.root))
+
+    def test_old_configs_are_migrated(self):
+        self.assertEqual(self.cfg(serial_port="/dev/serial0")["connection"], "gpio")
+        c = self.cfg(serial_port="/dev/ttyUSB0")
+        self.assertEqual((c["connection"], c["usb_device"]), ("usb", "/dev/ttyUSB0"))
+        self.assertEqual(self.cfg(serial_port="/dev/pts/4")["connection"], "custom")
+        self.assertEqual(self.cfg()["connection"], "usb")
+
+
 class ConfigTests(unittest.TestCase):
     def test_coercion_and_defaults(self):
         c = cc.normalize_config({"min_cm": "abc", "max_cm": 5, "baud": 1234, "window_start": "25:99",
