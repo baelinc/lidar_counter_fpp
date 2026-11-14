@@ -47,6 +47,13 @@ $ccPlugin = basename(__DIR__);
 #cc .help { font-size: .82rem; opacity: .7; margin-top: .2rem; }
 #cc pre { max-height: 380px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; padding: .6rem; font-size: .8rem; }
 #cc .warnbox { border: 1px solid var(--warn); color: var(--warn); border-radius: 6px; padding: .5rem .8rem; margin-bottom: 1rem; }
+#cc .sched-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .6rem; border: 1px solid var(--line); border-radius: 8px; padding: .5rem .7rem; margin-bottom: .5rem; max-width: 640px; }
+#cc .sched-days { display: flex; gap: 3px; }
+#cc .sched-days button { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: none; color: inherit; cursor: pointer; font-weight: 600; }
+#cc .sched-days button.on { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+#cc .sched-row input[type=time] { padding: .3rem .4rem; width: 8.5rem; max-width: 8.5rem; }
+#cc .sched-quick button { border: 0; background: none; color: #1f6feb; cursor: pointer; font-size: .8rem; padding: 0 .3rem; }
+#cc .sched-del { margin-left: auto; }
 @media (max-width: 700px) { #cc .field { grid-template-columns: 1fr; } }
 </style>
 
@@ -191,9 +198,8 @@ $ccPlugin = basename(__DIR__);
       { k: 'max_dwell_s', l: 'Blocked-beam warning (s)', t: 'number', h: 'Show a warning if the beam is blocked this long (e.g. a fallen sign). A parked car is still counted once.' }
     ],
     fSched: [
-      { k: 'schedule_mode', l: 'Count cars', t: 'select', o: [['window', 'During show hours (below)'], ['playing', 'Only while FPP is playing'], ['always', 'Always']], h: 'Detections outside the schedule are kept as “off-hours” so you can see them, but are not added to your totals.' },
-      { k: 'window_start', l: 'Show starts', t: 'time' },
-      { k: 'window_end', l: 'Show ends', t: 'time', h: 'End earlier than start for shows that run past midnight.' },
+      { k: 'schedule_mode', l: 'Count cars', t: 'select', o: [['window', 'During the show schedule (below)'], ['playing', 'Only while FPP is playing'], ['always', 'Always']], h: 'Detections outside the schedule are kept as “off-hours” so you can see them, but are not added to your totals.' },
+      { k: 'schedules', l: 'Show schedule', t: 'schedules', h: 'Add one entry per set of days with the same hours (e.g. Sun–Thu 5:30 PM–10:00 PM, and Fri–Sat 5:30 PM–11:00 PM). An end time earlier than the start time runs past midnight and counts as part of the day it started.' },
       { k: 'grace_min', l: 'Grace period (min)', t: 'number', h: '“Only while FPP is playing” mode: keep counting this long after the show stops.' },
       { k: 'rollover_hour', l: 'New night starts at', t: 'number', h: 'Hour (0–12). Cars counted after midnight still belong to the previous show night until this hour.' }
     ],
@@ -207,12 +213,76 @@ $ccPlugin = basename(__DIR__);
       { k: 'verify_tls', l: 'Verify HTTPS certificate', t: 'checkbox', h: 'Leave on unless your site uses a self-signed certificate.' }
     ]
   };
+  var DAY_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+  var DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  function schedRow(e) {
+    var r = document.createElement('div'); r.className = 'sched-row';
+    var days = document.createElement('div'); days.className = 'sched-days';
+    for (var d = 0; d < 7; d++) {
+      var b = document.createElement('button'); b.type = 'button'; b.textContent = DAY_LETTERS[d]; b.title = DAY_NAMES[d];
+      b.setAttribute('data-day', d); b.setAttribute('aria-pressed', 'false');
+      if (e.days.indexOf(d) >= 0) { b.classList.add('on'); b.setAttribute('aria-pressed', 'true'); }
+      b.onclick = function () { var on = this.classList.toggle('on'); this.setAttribute('aria-pressed', on ? 'true' : 'false'); };
+      days.appendChild(b);
+    }
+    function setDays(list) {
+      Array.prototype.forEach.call(days.children, function (btn) {
+        var on = list.indexOf(+btn.getAttribute('data-day')) >= 0; btn.classList.toggle('on', on); btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    }
+    var quick = document.createElement('span'); quick.className = 'sched-quick';
+    [['Every day', [0,1,2,3,4,5,6]], ['Weekdays', [1,2,3,4,5]], ['Weekends', [0,6]]].forEach(function (q) {
+      var qb = document.createElement('button'); qb.type = 'button'; qb.textContent = q[0]; qb.onclick = function () { setDays(q[1]); }; quick.appendChild(qb);
+    });
+    var st = document.createElement('input'); st.type = 'time'; st.value = e.start; st.className = 'sched-start'; st.setAttribute('aria-label', 'Start time');
+    var to = document.createElement('span'); to.textContent = 'to';
+    var en = document.createElement('input'); en.type = 'time'; en.value = e.end; en.className = 'sched-end'; en.setAttribute('aria-label', 'End time');
+    var del = document.createElement('button'); del.type = 'button'; del.className = 'b danger sched-del'; del.textContent = 'Remove';
+    del.onclick = function () { r.parentNode.removeChild(r); schedEmptyNote(); };
+    r.appendChild(days); r.appendChild(st); r.appendChild(to); r.appendChild(en); r.appendChild(del); r.appendChild(quick);
+    return r;
+  }
+  function schedRows() {
+    var out = [];
+    Array.prototype.forEach.call(document.querySelectorAll('#schedEditor .sched-row'), function (r) {
+      var days = [];
+      Array.prototype.forEach.call(r.querySelectorAll('.sched-days button.on'), function (b) { days.push(+b.getAttribute('data-day')); });
+      out.push({ days: days, start: r.querySelector('.sched-start').value, end: r.querySelector('.sched-end').value });
+    });
+    return out;
+  }
+  function schedEmptyNote() {
+    var rows = schedRows(), bad = rows.some(function (x) { return !x.days.length || !x.start || !x.end; });
+    $('schedEmpty').textContent = !rows.length ? 'No schedule entries – nothing will be counted.' : (bad ? 'Every entry needs at least one day and both times, or it is ignored.' : '');
+  }
+  function fillSchedules() {
+    var ed = $('schedEditor'); ed.textContent = '';
+    (cfg.schedules || []).forEach(function (e) { ed.appendChild(schedRow(e)); });
+    schedEmptyNote();
+  }
+  function applyModeVisibility() {
+    var f = $('schedField'); if (f) f.style.display = ($('cf_schedule_mode').value === 'window') ? '' : 'none';
+  }
   function buildForm(boxId) {
     var box = $(boxId);
     FIELDS[boxId].forEach(function (f) {
       var row = document.createElement('div'); row.className = 'field';
       var lab = document.createElement('label'); lab.textContent = f.l; lab.htmlFor = 'cf_' + f.k;
       var cell = document.createElement('div'), inp;
+      if (f.t === 'schedules') {
+        var ed = document.createElement('div'); ed.id = 'schedEditor';
+        var add = document.createElement('button'); add.type = 'button'; add.className = 'b'; add.id = 'schedAdd'; add.textContent = '+ Add schedule';
+        add.onclick = function () {
+          var last = schedRows().slice(-1)[0];
+          ed.insertBefore(schedRow(last ? { days: [], start: last.start, end: last.end } : { days: [0,1,2,3,4,5,6], start: '17:30', end: '22:00' }), add.parentNode === ed ? add : null);
+          schedEmptyNote();
+        };
+        var note = document.createElement('div'); note.id = 'schedEmpty'; note.className = 'msg bad';
+        cell.appendChild(ed); cell.appendChild(note); cell.appendChild(add);
+        if (f.h) { var hh = document.createElement('div'); hh.className = 'help'; hh.textContent = f.h; cell.appendChild(hh); }
+        row.id = 'schedField'; row.appendChild(lab); row.appendChild(cell); box.appendChild(row);
+        return;
+      }
       if (f.t === 'select') {
         inp = document.createElement('select');
         f.o.forEach(function (o) {
@@ -232,22 +302,26 @@ $ccPlugin = basename(__DIR__);
     });
   }
   ['fSensor', 'fDetect', 'fSched', 'fWebsite'].forEach(buildForm);
+  $('cf_schedule_mode').addEventListener('change', applyModeVisibility);
   var dl = document.createElement('datalist'); dl.id = 'ccPorts'; $('cc').appendChild(dl);
 
   function fillForms() {
     Object.keys(FIELDS).forEach(function (box) {
       FIELDS[box].forEach(function (f) {
+        if (f.t === 'schedules') { fillSchedules(); return; }
         var el = $('cf_' + f.k);
         if (f.t === 'checkbox') el.checked = !!cfg[f.k];
         else if (f.k === 'secret') { el.value = ''; el.placeholder = cfg.secret_set ? '•••••••• (saved – leave blank to keep)' : 'paste the secret here'; }
         else el.value = cfg[f.k];
       });
     });
+    applyModeVisibility();
   }
   function collect(boxes) {
     var out = {};
     boxes.forEach(function (box) {
       FIELDS[box].forEach(function (f) {
+        if (f.t === 'schedules') { out.schedules = schedRows().filter(function (x) { return x.days.length && x.start && x.end; }); return; }
         var el = $('cf_' + f.k);
         out[f.k] = (f.t === 'checkbox') ? el.checked : el.value;
       });

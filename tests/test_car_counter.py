@@ -133,6 +133,56 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(cc.show_date_for(datetime.datetime(2026, 12, 1, 19, 0), 6), "2026-12-01")
 
 
+class MultiScheduleTests(unittest.TestCase):
+    """Sun-Thu 17:30-22:00 and Fri/Sat 17:30-23:00 (0 = Sunday)."""
+    CFG = cc.normalize_config({"schedule_mode": "window", "schedules": [
+        {"days": [0, 1, 2, 3, 4], "start": "17:30", "end": "22:00"},
+        {"days": [5, 6], "start": "17:30", "end": "23:00"}]})
+
+    def on(self, y, m, d, h, mi, cfg=None):
+        return cc.counting_state(cfg or self.CFG, datetime.datetime(y, m, d, h, mi), False, 0, 0)[0]
+
+    def test_user_example(self):
+        # 2026-11-15 is a Sunday, 11-19 Thursday, 11-20 Friday, 11-21 Saturday
+        self.assertFalse(self.on(2026, 11, 15, 17, 29))
+        self.assertTrue(self.on(2026, 11, 15, 17, 30))
+        self.assertTrue(self.on(2026, 11, 19, 21, 59))
+        self.assertFalse(self.on(2026, 11, 19, 22, 0))
+        self.assertFalse(self.on(2026, 11, 20, 12, 0))
+        self.assertTrue(self.on(2026, 11, 20, 22, 30))     # Friday runs to 23:00
+        self.assertTrue(self.on(2026, 11, 21, 22, 59))
+        self.assertFalse(self.on(2026, 11, 21, 23, 0))
+
+    def test_overnight_entry_belongs_to_its_start_day(self):
+        cfg = cc.normalize_config({"schedules": [{"days": [5], "start": "18:00", "end": "01:00"}]})   # Friday only
+        self.assertTrue(self.on(2026, 11, 20, 23, 0, cfg))     # Fri 23:00
+        self.assertTrue(self.on(2026, 11, 21, 0, 30, cfg))     # Sat 00:30 (still Friday's show)
+        self.assertFalse(self.on(2026, 11, 21, 18, 30, cfg))   # Sat evening is not scheduled
+        self.assertFalse(self.on(2026, 11, 20, 0, 30, cfg))    # Fri 00:30 belongs to Thursday's show
+
+    def test_overlapping_entries_and_all_day(self):
+        cfg = cc.normalize_config({"schedules": [{"days": [1], "start": "08:00", "end": "09:00"},
+                                                 {"days": [1], "start": "08:30", "end": "10:00"},
+                                                 {"days": [2], "start": "00:00", "end": "00:00"}]})
+        self.assertTrue(self.on(2026, 11, 16, 9, 30, cfg))
+        self.assertFalse(self.on(2026, 11, 16, 10, 0, cfg))
+        self.assertTrue(self.on(2026, 11, 17, 3, 0, cfg))      # start == end -> whole day
+
+    def test_invalid_entries_dropped_and_empty_means_never(self):
+        cfg = cc.normalize_config({"schedules": [{"days": [], "start": "17:00", "end": "22:00"},
+                                                 {"days": [9], "start": "17:00", "end": "22:00"},
+                                                 {"days": [1], "start": "25:00", "end": "22:00"},
+                                                 "junk", {"days": ["2", 2, "x"], "start": "17:00", "end": "22:00"}]})
+        self.assertEqual(cfg["schedules"], [{"days": [2], "start": "17:00", "end": "22:00"}])
+        none = cc.normalize_config({"schedule_mode": "window", "schedules": []})
+        self.assertEqual(cc.counting_state(none, datetime.datetime(2026, 11, 16, 19, 0), False, 0, 0), (False, "no schedule entries"))
+
+    def test_old_single_window_config_is_migrated(self):
+        cfg = cc.normalize_config({"window_start": "18:00", "window_end": "21:00"})
+        self.assertEqual(cfg["schedules"], [{"days": [0, 1, 2, 3, 4, 5, 6], "start": "18:00", "end": "21:00"}])
+        self.assertTrue(self.on(2026, 11, 18, 19, 0, cfg))
+
+
 class ConfigTests(unittest.TestCase):
     def test_coercion_and_defaults(self):
         c = cc.normalize_config({"min_cm": "abc", "max_cm": 5, "baud": 1234, "window_start": "25:99",

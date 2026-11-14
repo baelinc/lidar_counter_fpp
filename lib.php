@@ -56,6 +56,26 @@ function cc_coerce($key, $value) {
     return $def;
 }
 
+/* Schedule entries: array of array('days' => [0..6, 0 = Sunday], 'start' => 'HH:MM', 'end' => 'HH:MM'). */
+function cc_coerce_schedules($value) {
+    $out = array();
+    if (!is_array($value)) return $out;
+    foreach (array_slice(array_values($value), 0, 28) as $e) {
+        if (!is_array($e) || !isset($e['days']) || !is_array($e['days'])) continue;
+        $days = array();
+        foreach ($e['days'] as $d) {
+            if (is_numeric($d) && (int)$d >= 0 && (int)$d <= 6) $days[(int)$d] = (int)$d;
+        }
+        ksort($days);
+        $start = isset($e['start']) ? trim((string)$e['start']) : '';
+        $end   = isset($e['end']) ? trim((string)$e['end']) : '';
+        $ok = '/^([01]?\d|2[0-3]):[0-5]\d$/';
+        if (!$days || !preg_match($ok, $start) || !preg_match($ok, $end)) continue;
+        $out[] = array('days' => array_values($days), 'start' => $start, 'end' => $end);
+    }
+    return $out;
+}
+
 function cc_read_json($path) {
     $raw = @file_get_contents($path);
     if ($raw === false) return null;
@@ -71,6 +91,11 @@ function cc_config() {
     }
     if ($out['max_cm'] <= $out['min_cm']) $out['max_cm'] = $out['min_cm'] + 10;
     $out['wp_url'] = rtrim($out['wp_url'], '/');
+    if ($raw !== null && isset($raw['schedules']) && is_array($raw['schedules'])) {
+        $out['schedules'] = cc_coerce_schedules($raw['schedules']);
+    } else {   // older config (single window) or fresh install: one entry for every day
+        $out['schedules'] = array(array('days' => range(0, 6), 'start' => $out['window_start'], 'end' => $out['window_end']));
+    }
     return $out;
 }
 
@@ -79,6 +104,7 @@ function cc_save_config($changes) {
     $cfg = cc_config();
     $schema = cc_schema();
     foreach ($changes as $k => $v) {
+        if ($k === 'schedules') { $cfg['schedules'] = cc_coerce_schedules($v); continue; }
         if (!isset($schema[$k])) continue;
         if ($k === 'secret' && trim((string)$v) === '') continue;
         $cfg[$k] = cc_coerce($k, $v);

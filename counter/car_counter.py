@@ -146,10 +146,37 @@ def coerce(key, value):
     return default
 
 
+def coerce_schedules(value):
+    """Validate a list of {"days":[0-6 (0=Sunday)], "start":"HH:MM", "end":"HH:MM"} entries."""
+    out = []
+    if not isinstance(value, list):
+        return out
+    for entry in value[:28]:
+        if not isinstance(entry, dict):
+            continue
+        days = set()
+        raw_days = entry.get("days")
+        for d in (raw_days if isinstance(raw_days, list) else []):
+            try:
+                if 0 <= int(d) <= 6:
+                    days.add(int(d))
+            except (TypeError, ValueError):
+                pass
+        start, end = str(entry.get("start", "")).strip(), str(entry.get("end", "")).strip()
+        if not days or parse_hhmm(start) is None or parse_hhmm(end) is None:
+            continue
+        out.append({"days": sorted(days), "start": start, "end": end})
+    return out
+
+
 def normalize_config(raw):
     cfg = {}
     for key, spec in SCHEMA.items():
         cfg[key] = coerce(key, raw[key]) if key in raw else spec[1]
+    if isinstance(raw.get("schedules"), list):
+        cfg["schedules"] = coerce_schedules(raw["schedules"])
+    else:  # older config (single window) or fresh install: one entry for every day
+        cfg["schedules"] = [{"days": list(range(7)), "start": cfg["window_start"], "end": cfg["window_end"]}]
     if cfg["max_cm"] <= cfg["min_cm"]:
         cfg["max_cm"] = cfg["min_cm"] + 10
     cfg["wp_url"] = cfg["wp_url"].rstrip("/")
@@ -353,18 +380,37 @@ def show_date_for(dt, rollover_hour):
     return (dt - datetime.timedelta(hours=rollover_hour)).date().isoformat()
 
 
+def schedule_active(entries, dt):
+    """True if dt falls inside any entry. An entry whose end is earlier than its start runs
+    past midnight and belongs to the day it started on (Friday 17:00-01:00 covers Sat 00:30).
+    start == end means the whole day."""
+    weekday = (dt.weekday() + 1) % 7          # 0 = Sunday
+    yesterday = (weekday - 1) % 7
+    minute = dt.hour * 60 + dt.minute
+    for entry in entries:
+        start, end = parse_hhmm(entry["start"]), parse_hhmm(entry["end"])
+        days = entry["days"]
+        if start == end:
+            if weekday in days:
+                return True
+        elif start < end:
+            if weekday in days and start <= minute < end:
+                return True
+        else:
+            if (weekday in days and minute >= start) or (yesterday in days and minute < end):
+                return True
+    return False
+
+
 def counting_state(cfg, dt, fpp_playing, fpp_last_playing_ts, now_ts):
     """Returns (counting_active, reason)."""
     mode = cfg["schedule_mode"]
     if mode == "always":
         return True, "always on"
     if mode == "window":
-        start = parse_hhmm(cfg["window_start"])
-        end = parse_hhmm(cfg["window_end"])
-        if start is None or end is None or start == end:
-            return True, "always on"
-        minute = dt.hour * 60 + dt.minute
-        inside = (start <= minute < end) if start < end else (minute >= start or minute < end)
+        inside = schedule_active(cfg["schedules"], dt)
+        if not cfg["schedules"]:
+            return False, "no schedule entries"
         return inside, ("inside show hours" if inside else "outside show hours")
     # mode == "playing"
     if fpp_playing:

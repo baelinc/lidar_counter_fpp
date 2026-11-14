@@ -10,7 +10,7 @@ Runs happily next to an LED sign on the same Pi. Python standard library only �
 * Live dashboard in FPP: tonight / last night / season totals, live distance bar, hourly and nightly charts, CSV export
 * **Test mode** (cars shown but not recorded) for aiming and tuning, one‑click **Calibrate empty road**
 * Smart counting: a car counts once when it has been in the beam for *confirm time*; slow, stopped or bumper‑to‑bumper cars are not double counted; single glitch frames are ignored
-* Counting schedule: show‑hours window (supports past midnight), only while FPP is playing (+grace period), or always. Detections outside the schedule are kept as **off‑hours** and never added to totals
+* Counting schedule: any number of schedule entries, each with its own days and start/end time (e.g. Sun–Thu 5:30–10:00 PM **and** Fri–Sat 5:30–11:00 PM). An entry that ends before it starts runs past midnight and belongs to the day it started. Or count only while FPP is playing (+grace period), or always. Detections outside the schedule are kept as **off‑hours** and never added to totals
 * "Show night" rollover (default 6 am) so cars after midnight belong to the right night
 * Manual +1 / −1 / reset tonight (reset is recoverable – events are voided, not deleted)
 * Warnings: sensor silent, beam blocked for too long, last website upload failed
@@ -46,7 +46,7 @@ First time using the GPIO serial port? Run once and reboot:
 (backs up `config.txt`/`cmdline.txt`, enables the UART and frees it from the login console). Then use `/dev/serial0`.
 
 ## Set‑up
-1. **Sensor & Schedule tab** – check serial port/baud (115200 is the factory default), set show hours and save.
+1. **Sensor & Schedule tab** – check serial port/baud (115200 is the factory default), build your show schedule (one entry per set of days with the same hours; *Every day / Weekdays / Weekends* shortcuts help) and save.
 2. Aim the sensor across the lane the cars use at about bumper height, so an empty road reads *no return* (or something far away).
 3. Dashboard → **Test mode**, drive/walk past, watch the live bar and the *test cars* counter. Adjust *Confirm time* (raise it to ignore people/animals).
 4. With the road clear, press **Calibrate empty road** – it sets *Farthest distance* just inside whatever the sensor sees as background.
