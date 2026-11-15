@@ -19,6 +19,20 @@ def local_ts(dt):
     return dt.timestamp()
 
 
+class RealBoardFileTests(unittest.TestCase):
+    """Sample downloaded from a real BaldrickSignals board: no header, 'epoch, count'."""
+    RAW = "1794719411, 5\n1794719441, 6\n1794719471, 6\n1794719539, 5\n1794719569, 5\n1794719869, 7\n"
+
+    def test_headerless_epoch_count(self):
+        for clk in ("local", "utc"):
+            r = cc.parse_board_csv(self.RAW, clock=clk)
+            self.assertTrue(r["ok"], r["error"])
+            self.assertEqual((r["time_col"], r["count_col"]), (0, 1))
+            self.assertEqual(len(r["rows"]), 6)
+            self.assertEqual(r["rows"][0], (1794719411.0, 5))
+            self.assertEqual(r["rows"][-1], (1794719869.0, 7))
+
+
 class UrlTests(unittest.TestCase):
     def test_urls_prefer_log_endpoint_then_csv(self):
         u = cc.board_urls("192.168.1.167", 1794633908)
