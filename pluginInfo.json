@@ -2,7 +2,7 @@
     "repoName": "lidar_counter_fpp",
     "name": "Car Counter",
     "author": "Light Show Car Counter",
-    "description": "Counts the cars that visit your display using a TFmini / TF-Luna lidar on a serial port. Tracks nightly and hourly totals, and uploads them to your WordPress site every night.",
+    "description": "Counts the cars that visit your display using a TFmini / TF-Luna lidar on a serial port (and, optionally, estimates people with a BaldrickSignals board). Tracks nightly and hourly totals and uploads them to your WordPress site every night.",
     "homeURL": "https://github.com/baelinc/lidar_counter_fpp",
     "srcURL": "https://github.com/baelinc/lidar_counter_fpp",
     "bugURL": "https://github.com/baelinc/lidar_counter_fpp/issues",

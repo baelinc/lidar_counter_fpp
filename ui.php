@@ -70,6 +70,7 @@ $ccPlugin = basename(__DIR__);
   <div class="tabs" id="tabs">
     <button data-tab="dash" class="active">Dashboard</button>
     <button data-tab="settings">Sensor &amp; Schedule</button>
+    <button data-tab="people">Crowd (phones)</button>
     <button data-tab="website">Website Sync</button>
     <button data-tab="log">Log</button>
   </div>
@@ -80,6 +81,8 @@ $ccPlugin = basename(__DIR__);
       <div class="card"><div class="sub" id="tonightLabel">Tonight</div><div class="big" id="vTonight">–</div><div class="sub" id="vTonightSub"></div></div>
       <div class="card"><div class="sub">Last night</div><div class="big" id="vLast">–</div><div class="sub" id="vLastSub"></div></div>
       <div class="card"><div class="sub">Season total</div><div class="big" id="vSeason">–</div><div class="sub" id="vSeasonSub"></div></div>
+      <div class="card" id="cardPeople" style="display:none"><div class="sub">People tonight (est.)</div><div class="big" id="vPeople">–</div><div class="sub" id="vPeopleSub"></div></div>
+      <div class="card" id="cardDevices" style="display:none"><div class="sub">Devices nearby now</div><div class="big" id="vDevices">–</div><div class="sub" id="vDevicesSub"></div></div>
       <div class="card"><div class="sub">Off-hours detections tonight</div><div class="big" id="vOff">–</div><div class="sub">Not included in totals</div></div>
     </div>
 
@@ -105,7 +108,7 @@ $ccPlugin = basename(__DIR__);
     <div class="panel">
       <h3>Recent nights</h3>
       <div class="chart" id="chartDays"></div><div class="labels" id="labelsDays"></div>
-      <table class="t" style="margin-top:1rem"><thead><tr><th>Night</th><th class="n">Cars</th><th class="n">Off-hours</th><th>First car</th><th>Last car</th></tr></thead><tbody id="tblDays"></tbody></table>
+      <table class="t" style="margin-top:1rem"><thead><tr id="tblHead"><th>Night</th><th class="n">Cars</th><th class="n">Off-hours</th><th>First car</th><th>Last car</th></tr></thead><tbody id="tblDays"></tbody></table>
       <div class="row"><a class="b" style="text-decoration:none" id="csvLink" href="#">Download CSV</a></div>
     </div>
   </div>
@@ -142,6 +145,25 @@ $ccPlugin = basename(__DIR__);
     <div class="panel"><h3>Detection</h3><div id="fDetect"></div></div>
     <div class="panel"><h3>When to count</h3><div id="fSched"></div></div>
     <div class="row"><button class="b primary" id="btnSaveSettings">Save settings</button><span class="msg" id="saveMsg1"></span></div>
+  </div>
+
+  <!-- ===================== Crowd ===================== -->
+  <div id="tab-people" style="display:none">
+    <div class="panel"><h3>BaldrickSignals crowd board</h3>
+      <div class="help" style="opacity:.9;margin-bottom:.6rem">A BaldrickSignals board estimates how many phones are near your display. This plugin checks the board on a schedule, keeps the numbers that fall inside your show hours, and reports them as <strong>people (estimated)</strong> – separate from the car count, since one car can hold several people. Only the board's address is needed; the board must be on the same network as this Pi.</div>
+      <div id="fPeople"></div>
+      <div class="row"><button class="b primary" id="btnSavePeople">Save</button><button class="b" id="btnTestPeople">Test board</button><button class="b" id="btnPollPeople">Check now</button><span class="msg" id="saveMsgPeople"></span></div>
+    </div>
+    <div class="panel"><h3>Board status</h3><div id="peopleStatus" class="msg">Not enabled.</div>
+      <div id="peopleTestBox" style="display:none">
+        <div class="sub" style="margin-top:.6rem">What the plugin read from <code>http://&lt;board&gt;/csv</code> (first and last lines):</div>
+        <pre id="peopleLines" style="max-height:11rem;overflow:auto"></pre>
+        <div class="msg" id="peopleDetect"></div>
+      </div>
+    </div>
+    <div class="panel"><h3>How the numbers are worked out</h3>
+      <div class="help" style="opacity:.9">The board reports an estimate of the devices it can see right now (it already applies the offset and multiplier you set on the board). For each show night this plugin records the <strong>peak</strong> (the most at once) and an <strong>estimated visitor total</strong> – the number of arrivals seen as the count rises through the evening, after ignoring one-reading blips. Readings outside the show schedule are ignored. It is an estimate, not a head count.</div>
+    </div>
   </div>
 
   <!-- ===================== Website ===================== -->
@@ -189,7 +211,7 @@ $ccPlugin = basename(__DIR__);
   function pill(id, text, cls) { var e = $(id); e.textContent = text; e.className = 'pill ' + (cls || ''); }
 
   /* ---------- tabs ---------- */
-  var tabs = ['dash', 'settings', 'website', 'log'];
+  var tabs = ['dash', 'settings', 'people', 'website', 'log'];
   $('tabs').addEventListener('click', function (e) {
     var t = e.target.getAttribute && e.target.getAttribute('data-tab');
     if (!t) return;
@@ -223,6 +245,14 @@ $ccPlugin = basename(__DIR__);
       { k: 'schedules', l: 'Show schedule', t: 'schedules', h: 'Add one entry per set of days with the same hours (e.g. Sun–Thu 5:30 PM–10:00 PM, and Fri–Sat 5:30 PM–11:00 PM). An end time earlier than the start time runs past midnight and counts as part of the day it started.' },
       { k: 'grace_min', l: 'Grace period (min)', t: 'number', h: '“Only while FPP is playing” mode: keep counting this long after the show stops.' },
       { k: 'rollover_hour', l: 'New night starts at', t: 'number', h: 'Hour (0–12). Cars counted after midnight still belong to the previous show night until this hour.' }
+    ],
+    fPeople: [
+      { k: 'people_enabled', l: 'Use BaldrickSignals', t: 'checkbox' },
+      { k: 'people_host', l: 'Board IP address', t: 'text', ph: '192.168.1.50', h: 'The address shown on the board’s web page (or baldrickboard.local). Give the board a fixed IP in your router so it does not change.' },
+      { k: 'people_interval_min', l: 'Check the board every (min)', t: 'number', h: 'How often to read the board. Each check downloads the board’s history, so 5 minutes or more is kind to it. Outside show hours it checks hourly.' },
+      { k: 'people_clock', l: 'Board clock', t: 'select', o: [['local', 'Shows local time (same as this Pi)'], ['utc', 'Shows UTC']], h: 'Only matters if the board’s timestamps have no time zone. Use “Test board” to confirm the newest reading is about now.' },
+      { k: 'people_time_col', l: 'Time column (advanced)', t: 'number', h: '0 = detect automatically. Otherwise the column number (1 = first) holding the timestamp.' },
+      { k: 'people_count_col', l: 'Count column (advanced)', t: 'number', h: '0 = detect automatically. Otherwise the column number holding the crowd/device count. Use “Test board” to see what was detected.' }
     ],
     fWebsite: [
       { k: 'sync_enabled', l: 'Upload to website', t: 'checkbox' },
@@ -342,7 +372,7 @@ $ccPlugin = basename(__DIR__);
       row.appendChild(lab); row.appendChild(cell); box.appendChild(row);
     });
   }
-  ['fSensor', 'fDetect', 'fSched', 'fWebsite'].forEach(buildForm);
+  ['fSensor', 'fDetect', 'fSched', 'fPeople', 'fWebsite'].forEach(buildForm);
   $('cf_schedule_mode').addEventListener('change', applyModeVisibility);
   $('cf_connection').addEventListener('change', applyConnection);
   (function () { var n = document.createElement('div'); n.id = 'usbDetected'; n.className = 'msg'; $('row_usb_device').lastChild.appendChild(n); })();
@@ -381,6 +411,11 @@ $ccPlugin = basename(__DIR__);
   }
   $('btnSaveSettings').onclick = function () { save(['fSensor', 'fDetect', 'fSched'], $('saveMsg1')); };
   $('btnSaveWeb').onclick = function () { save(['fWebsite'], $('saveMsg2')); };
+  $('btnSavePeople').onclick = function () { save(['fPeople'], $('saveMsgPeople')); };
+  $('btnTestPeople').onclick = function () {
+    save(['fPeople'], $('saveMsgPeople')).then(function () { sendCommand({ cmd: 'people_test' }, $('saveMsgPeople')); });
+  };
+  $('btnPollPeople').onclick = function () { sendCommand({ cmd: 'people_poll' }, $('saveMsgPeople')); };
 
   /* ---------- commands ---------- */
   function sendCommand(payload, msgEl, waitForFinal) {
@@ -494,6 +529,8 @@ $ccPlugin = basename(__DIR__);
     for (var h = lo; h <= hi; h++) { L.push(h); V.push(hrs[h]); }
     bars('chartHours', 'labelsHours', L, V);
 
+    renderPeople(s);
+
     var sy2 = s.sync || {};
     var txt = sy2.ts ? ('Last attempt ' + fmtTime(sy2.ts) + ' – ' + (sy2.last_ok ? 'OK' : 'FAILED') + ': ' + sy2.message) : 'No upload attempted yet.';
     if (sy2.last_ok_ts) txt += '  Last successful upload: ' + fmtTime(sy2.last_ok_ts) + '.';
@@ -501,16 +538,52 @@ $ccPlugin = basename(__DIR__);
     $('syncStatus').className = 'msg' + (sy2.ts ? (sy2.last_ok ? ' ok' : ' bad') : '');
   }
 
+  function renderPeople(s) {
+    var pp = s.people || {}, st = pp.status || {}, on = !!pp.enabled;
+    $('cardPeople').style.display = on ? '' : 'none';
+    $('cardDevices').style.display = on ? '' : 'none';
+    if (on) {
+      var t = pp.today || {};
+      $('vPeople').textContent = t.samples ? t.people : '–';
+      $('vPeopleSub').textContent = t.samples ? 'Peak at once: ' + t.people_peak : 'No readings in show hours yet';
+      $('vDevices').textContent = st.latest_count === null || st.latest_count === undefined ? '–' : st.latest_count;
+      $('vDevicesSub').textContent = st.latest_ts ? 'Reading from ' + fmtClock(st.latest_ts) : (st.ok === false ? 'Board not reachable' : 'Waiting for first check');
+    }
+    var el = $('peopleStatus');
+    if (!on) { el.textContent = 'Not enabled. Tick “Use BaldrickSignals”, enter the board’s address and press Save.'; el.className = 'msg'; }
+    else if (!st.last_poll) { el.textContent = 'Waiting for the first check of ' + pp.host + '…'; el.className = 'msg'; }
+    else {
+      var txt = 'Last check ' + fmtTime(st.last_poll) + ' – ' + (st.ok ? 'OK' : 'FAILED: ' + st.error);
+      if (st.ok) txt += '. Newest reading: ' + st.latest_count + ' device(s) at ' + fmtTime(st.latest_ts) + '; the board holds ' + st.rows + ' rows. Checking every ' + pp.interval_min + ' min during the show.';
+      if (st.clock_warning) txt += '  ' + st.clock_warning;
+      el.textContent = txt; el.className = 'msg ' + (st.ok ? 'ok' : 'bad');
+    }
+    var tr = pp.test, box = $('peopleTestBox');
+    if (tr && tr.ts) {
+      box.style.display = '';
+      $('peopleLines').textContent = (tr.lines || []).join('\n') || '(nothing received)';
+      var d = tr.ok ? 'Detected – time: ' + tr.time_col + ' · count: ' + tr.count_col + ' · ' + tr.rows + ' rows. ' + (tr.message || '') + (tr.note ? ' ' + tr.note : '') : (tr.message || 'Failed');
+      $('peopleDetect').textContent = d; $('peopleDetect').className = 'msg ' + (tr.ok ? 'ok' : 'bad');
+    } else { box.style.display = 'none'; }
+  }
+
   function renderStats() {
     if (!stats) return;
-    var days = stats.days.filter(function (d) { return d.total > 0 || d.offhours > 0; });
+    var days = stats.days.filter(function (d) { return d.total > 0 || d.offhours > 0 || d.people > 0; });
     var last = days.slice(-14);
     bars('chartDays', 'labelsDays', last.map(function (d) { return d.date.slice(5); }), last.map(function (d) { return d.total; }));
     var tb = $('tblDays'); tb.textContent = '';
+    var hasPeople = days.some(function (d) { return d.people !== undefined; });
+    var head = $('tblHead'); head.textContent = '';
+    ['Night', 'Cars', 'Off-hours', 'First car', 'Last car'].concat(hasPeople ? ['People (est.)', 'Peak'] : []).forEach(function (h, i) {
+      var th = document.createElement('th'); th.textContent = h; if (i === 1 || i === 2 || i > 4) th.className = 'n'; head.appendChild(th);
+    });
     days.slice(-30).reverse().forEach(function (d) {
       var tr = document.createElement('tr');
-      [d.date, d.total, d.offhours, fmtClock(d.first_ts), fmtClock(d.last_ts)].forEach(function (v, i) {
-        var td = document.createElement('td'); td.textContent = v; if (i === 1 || i === 2) td.className = 'n'; tr.appendChild(td);
+      var cells = [d.date, d.total, d.offhours, fmtClock(d.first_ts), fmtClock(d.last_ts)];
+      if (hasPeople) cells.push(d.people === undefined ? '–' : d.people, d.people_peak === undefined ? '–' : d.people_peak);
+      cells.forEach(function (v, i) {
+        var td = document.createElement('td'); td.textContent = v; if (i === 1 || i === 2 || i > 4) td.className = 'n'; tr.appendChild(td);
       });
       tb.appendChild(tr);
     });

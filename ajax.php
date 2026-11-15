@@ -46,7 +46,7 @@ switch ($action) {
         cc_out(array('ok' => true));
 
     case 'command':
-        $allowed = array('adjust', 'reset_today', 'test_mode', 'calibrate', 'sync_now', 'sync_test');
+        $allowed = array('adjust', 'reset_today', 'test_mode', 'calibrate', 'sync_now', 'sync_test', 'people_test', 'people_poll');
         $cmd = isset($body['cmd']) ? (string)$body['cmd'] : '';
         if (!in_array($cmd, $allowed, true)) cc_out(array('ok' => false, 'error' => 'Unknown command'), 400);
         $payload = array('cmd' => $cmd);
@@ -79,11 +79,11 @@ switch ($action) {
         header('Content-Type: text/csv');
         header('Content-Disposition: attachment; filename="car-counts-' . date('Y-m-d') . '.csv"');
         $out = fopen('php://output', 'w');
-        $head = array('date', 'cars', 'offhours_detections');
+        $head = array('date', 'cars', 'offhours_detections', 'people_est', 'people_peak');
         for ($h = 0; $h < 24; $h++) $head[] = sprintf('h%02d', $h);
         fputcsv($out, $head, ',', '"', '\\');
         foreach (($st['days'] ?? array()) as $d) {
-            fputcsv($out, array_merge(array($d['date'], $d['total'], $d['offhours']), $d['hours']), ',', '"', '\\');
+            fputcsv($out, array_merge(array($d['date'], $d['total'], $d['offhours'], $d['people'] ?? '', $d['people_peak'] ?? ''), $d['hours']), ',', '"', '\\');
         }
         exit;
 

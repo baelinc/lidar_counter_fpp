@@ -9,17 +9,20 @@ counts vehicles passing the sensor, stores every event in SQLite and
 Standard library only - nothing to pip install on the Pi.
 Written for Python 3.7+ (FPP images ship 3.9 - 3.11).
 """
+import csv
 import datetime
 import fcntl
 import glob
 import hashlib
 import hmac
+import io
 import json
 import logging
 import logging.handlers
 import os
 import queue
 import random
+import re
 import select
 import signal
 import sqlite3
@@ -32,7 +35,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 USER_AGENT = "fpp-car-counter/" + VERSION
 
 log = logging.getLogger("car-counter")
@@ -112,6 +115,13 @@ SCHEMA = {
     "sync_days": ("int", 7, 1, 60),
     "live_interval_min": ("int", 0, 0, 240),
     "verify_tls": ("bool", True),
+    # BaldrickSignals crowd board (counts phones/devices; reported separately from cars)
+    "people_enabled": ("bool", False),
+    "people_host": ("str", "", 120),                 # IP address or hostname of the board
+    "people_interval_min": ("int", 5, 1, 120),       # how often to check the board
+    "people_clock": ("choice", "local", ["local", "utc"]),   # time zone of the timestamps in the board's CSV
+    "people_time_col": ("int", 0, 0, 40),            # 0 = auto-detect (1 = first column)
+    "people_count_col": ("int", 0, 0, 40),           # 0 = auto-detect
 }
 
 
@@ -222,6 +232,7 @@ def normalize_config(raw):
     if cfg["max_cm"] <= cfg["min_cm"]:
         cfg["max_cm"] = cfg["min_cm"] + 10
     cfg["wp_url"] = cfg["wp_url"].rstrip("/")
+    cfg["people_host"] = normalize_board_host(cfg["people_host"])
     return cfg
 
 
@@ -490,6 +501,13 @@ class Store:
             );
             CREATE INDEX IF NOT EXISTS idx_events_date ON events(show_date);
             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+            CREATE TABLE IF NOT EXISTS people_samples (
+                ts INTEGER PRIMARY KEY,
+                show_date TEXT NOT NULL,
+                count INTEGER NOT NULL,
+                counted INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE INDEX IF NOT EXISTS idx_people_date ON people_samples(show_date);
             """
         )
 
@@ -556,12 +574,297 @@ class Store:
         ).fetchone()
         return max(0, int(row[0]))
 
+    # ---- crowd (BaldrickSignals) samples ---------------------------------
+    def add_people_samples(self, rows):
+        """rows: (ts, show_date, count, counted). Returns how many were new."""
+        if not rows:
+            return 0
+        db = self._db()
+        before = db.execute("SELECT COUNT(*) FROM people_samples").fetchone()[0]
+        db.execute("BEGIN")
+        try:
+            db.executemany("INSERT OR IGNORE INTO people_samples (ts, show_date, count, counted) VALUES (?,?,?,?)",
+                           [(int(t), sd, max(0, int(c)), 1 if k else 0) for t, sd, c, k in rows])
+            db.execute("COMMIT")
+        except Exception:
+            db.execute("ROLLBACK")
+            raise
+        added = db.execute("SELECT COUNT(*) FROM people_samples").fetchone()[0] - before
+        if added:
+            self._bump()
+        return added
+
+    def people_days(self, since_date, until_date=None):
+        """{date: {"people": estimated visitors, "people_peak": busiest moment, "samples": n}} (show hours only)."""
+        until = until_date or "9999-12-31"
+        out, cur_date, cur = {}, None, []
+        for sd, ts, count in self._db().execute(
+            "SELECT show_date, ts, count FROM people_samples WHERE counted=1 AND show_date>=? AND show_date<=?"
+            " ORDER BY show_date, ts", (since_date, until)):
+            if sd != cur_date:
+                if cur_date is not None:
+                    out[cur_date] = estimate_people(cur)
+                cur_date, cur = sd, []
+            cur.append((ts, count))
+        if cur_date is not None:
+            out[cur_date] = estimate_people(cur)
+        return out
+
+    def people_latest(self):
+        row = self._db().execute("SELECT ts, count FROM people_samples ORDER BY ts DESC LIMIT 1").fetchone()
+        return {"ts": row[0], "count": row[1]} if row else None
+
+    def people_prune(self, keep_days=500):
+        cutoff = int(time.time()) - keep_days * 86400
+        self._db().execute("DELETE FROM people_samples WHERE ts<?", (cutoff,))
+
     def meta_get(self, key, default=None):
         row = self._db().execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
         return row[0] if row else default
 
     def meta_set(self, key, value):
         self._db().execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?,?)", (key, str(value)))
+
+
+# --------------------------------------------------------------------------
+# BaldrickSignals crowd board
+#
+# The board estimates how many phones/devices are nearby (every 30 s) and serves its history as
+# CSV at http://<board>/csv.  The column layout is not documented, so the reader auto-detects the
+# timestamp and count columns (and lets the user override them).
+# --------------------------------------------------------------------------
+def normalize_board_host(text):
+    """'http://192.168.1.50/csv' -> '192.168.1.50'.  Returns '' for anything that is not a host."""
+    t = str(text or "").strip()
+    t = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", "", t)
+    t = t.split("/")[0].split("?")[0].strip()
+    return t if re.match(r"^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?(:\d{1,5})?$", t) else ""
+
+
+def fetch_board_csv(host, timeout=12, max_bytes=16 << 20):
+    """Download the board's CSV.  Returns (ok, text-or-error-message)."""
+    host = normalize_board_host(host)
+    if not host:
+        return False, "Enter the board's IP address (for example 192.168.1.50)."
+    url = "http://%s/csv" % host
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/csv,text/plain,*/*"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read(max_bytes + 1)
+    except urllib.error.HTTPError as exc:
+        return False, "The board answered HTTP %d for /csv." % exc.code
+    except (OSError, urllib.error.URLError, ValueError) as exc:
+        reason = getattr(exc, "reason", exc)
+        return False, "Could not reach the board at %s (%s)." % (host, reason)
+    if len(raw) > max_bytes:
+        raw = raw[-max_bytes:]                      # keep the newest part; the oldest rows are the least useful
+        raw = raw[raw.find(b"\n") + 1:] if b"\n" in raw else raw
+    return True, raw.decode("utf-8", "replace")
+
+
+_NUMBER = re.compile(r"^-?\d+(\.\d+)?$")
+_DATE_FORMATS_ISO = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M",
+                     "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M")
+_DATE_ONLY = ("%Y-%m-%d", "%Y/%m/%d")
+
+
+def _slash_formats(dayfirst):
+    order = ("%d/%m", "%m/%d") if dayfirst else ("%m/%d", "%d/%m")
+    out = []
+    for dm in order[:1]:
+        for year in ("%Y", "%y"):
+            for tm in ("%H:%M:%S", "%H:%M", "%I:%M:%S %p", "%I:%M %p"):
+                out.append("%s/%s %s" % (dm, year, tm))
+    return out
+
+
+def parse_time_cell(cell, clock="local", dayfirst=False):
+    """Timestamp text -> epoch seconds (float) or None."""
+    c = str(cell).strip().strip('"')
+    if not c:
+        return None
+    if _NUMBER.match(c):
+        v = float(c)
+        if 1e9 <= v < 1e11:
+            return v
+        if 1e12 <= v < 1e14:
+            return v / 1000.0
+        return None
+    dt = None
+    if re.search(r"(Z|[+-]\d\d:?\d\d)$", c) and "T" in c.replace(" ", "T", 1):
+        try:
+            dt = datetime.datetime.fromisoformat(c.replace("Z", "+00:00"))
+        except ValueError:
+            dt = None
+    if dt is None:
+        for fmt in _DATE_FORMATS_ISO + tuple(_slash_formats(dayfirst)):
+            try:
+                dt = datetime.datetime.strptime(c, fmt)
+                break
+            except ValueError:
+                continue
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        if clock == "utc":
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        else:
+            return dt.timestamp()                       # naive = the Pi's local time
+    return dt.timestamp()
+
+
+def _looks_like_date_only(cell):
+    c = str(cell).strip()
+    for fmt in _DATE_ONLY:
+        try:
+            datetime.datetime.strptime(c, fmt)
+            return True
+        except ValueError:
+            pass
+    return bool(re.match(r"^\d{1,2}/\d{1,2}/\d{2,4}$", c))
+
+
+def _looks_like_time_only(cell):
+    return bool(re.match(r"^\d{1,2}:\d{2}(:\d{2})?(\s?[AaPp][Mm])?$", str(cell).strip()))
+
+
+def _infer_dayfirst(values):
+    a_big = b_big = False
+    for v in values:
+        m = re.match(r"^\s*(\d{1,2})/(\d{1,2})/\d{2,4}", str(v))
+        if m:
+            a_big = a_big or int(m.group(1)) > 12
+            b_big = b_big or int(m.group(2)) > 12
+    return a_big and not b_big
+
+
+def parse_board_csv(text, time_col=0, count_col=0, clock="local"):
+    """Parse the board's CSV.  time_col / count_col are 1-based overrides (0 = auto-detect).
+    Returns a dict: ok, error, header, delimiter, time_col, count_col (0-based or None),
+    combined (date+time in two columns), rows [(epoch, count)], lines (a few raw lines), total_rows."""
+    res = {"ok": False, "error": "", "header": None, "delimiter": ",", "time_col": None, "count_col": None,
+           "combined": False, "rows": [], "lines": [], "total_rows": 0}
+    lines = [ln for ln in text.replace("\r\n", "\n").replace("\r", "\n").split("\n") if ln.strip()]
+    if not lines:
+        res["error"] = "The board returned an empty CSV."
+        return res
+    res["lines"] = lines[:4] + (["…"] + lines[-2:] if len(lines) > 7 else lines[4:])
+    sample = "\n".join(lines[:20])
+    delim = max([",", ";", "\t", "|"], key=lambda d: sample.count(d))
+    res["delimiter"] = delim
+    try:
+        table = [[c.strip() for c in row] for row in csv.reader(io.StringIO("\n".join(lines)), delimiter=delim)]
+    except csv.Error as exc:
+        res["error"] = "Could not read the CSV (%s)." % exc
+        return res
+    ncols = max(len(r) for r in table)
+
+    def is_num(c):
+        return bool(_NUMBER.match(c))
+
+    # header: first row with no numbers and no timestamps in it
+    header = None
+    first = table[0]
+    if first and not any(is_num(c) or parse_time_cell(c) is not None or _looks_like_date_only(c) for c in first if c):
+        header = first
+        table = table[1:]
+    res["header"] = header
+    res["total_rows"] = len(table)
+    if not table:
+        res["error"] = "The CSV has a header but no data rows yet."
+        return res
+    body = table[-400:] if len(table) > 400 else table      # sample for column detection
+
+    def col_values(i):
+        return [r[i] for r in body if i < len(r) and r[i] != ""]
+
+    dayfirst = False
+    for i in range(ncols):
+        dayfirst = dayfirst or _infer_dayfirst(col_values(i))
+
+    def col_is_time(i):
+        vals = col_values(i)
+        return bool(vals) and all(parse_time_cell(v, clock, dayfirst) is not None for v in vals)
+
+    hname = lambda i: (header[i].lower() if header and i < len(header) else "")
+
+    # ---- timestamp column
+    tcol = time_col - 1 if time_col > 0 and time_col <= ncols else None
+    if tcol is None:
+        cands = [i for i in range(ncols) if col_is_time(i)]
+        named = [i for i in cands if re.search(r"time|date|stamp|when|epoch|\bts\b", hname(i))]
+        tcol = (named or cands or [None])[0]
+    dcol = None
+    if tcol is None:                                          # separate date and time columns?
+        for i in range(ncols - 1):
+            dv, tv = col_values(i), col_values(i + 1)
+            if dv and tv and all(_looks_like_date_only(v) for v in dv) and all(_looks_like_time_only(v) for v in tv):
+                dcol, tcol = i, i + 1
+                break
+    res["time_col"], res["combined"] = tcol, dcol is not None
+
+    # ---- count column
+    ccol = count_col - 1 if count_col > 0 and count_col <= ncols else None
+    skip = {tcol, dcol}
+    if ccol is None:
+        numeric = [i for i in range(ncols) if i not in skip and col_values(i) and all(is_num(v) for v in col_values(i))]
+        for pattern in (r"people|crowd|attend|visitor|estimate|audience", r"device|signal|count|number|total|detect"):
+            hit = [i for i in numeric if re.search(pattern, hname(i))]
+            if hit:
+                ccol = hit[0]
+                break
+        if ccol is None and numeric:
+            ccol = numeric[-1]                                # last numeric column is usually the adjusted number
+    res["count_col"] = ccol
+    if ccol is None:
+        res["error"] = "Could not find a numeric column with the device count. Set the count column manually."
+        return res
+
+    rows = []
+    for r in table:
+        if ccol >= len(r) or not is_num(r[ccol]):
+            continue
+        count = max(0, int(round(float(r[ccol]))))
+        if tcol is None:
+            rows.append((None, count))
+            continue
+        cell = (r[dcol] + " " + r[tcol]) if dcol is not None and tcol < len(r) and dcol < len(r) else (r[tcol] if tcol < len(r) else "")
+        ts = parse_time_cell(cell, clock, dayfirst)
+        if ts is not None:
+            rows.append((ts, count))
+    res["rows"] = rows
+    res["ok"] = bool(rows)
+    if not rows:
+        res["error"] = "No usable rows found (check the time and count columns)."
+    return res
+
+
+def _median3(values):
+    out = []
+    for i, v in enumerate(values):
+        a = values[i - 1] if i > 0 else v
+        b = values[i + 1] if i + 1 < len(values) else v
+        out.append(sorted((a, v, b))[1])
+    return out
+
+
+def estimate_people(samples, gap_s=1800):
+    """samples: [(ts, count)] for one show night, oldest first.
+    The board reports roughly how many devices are nearby right now, so the estimated number of
+    visitors is the sum of the increases (arrivals) between readings, after a light median filter
+    that removes one-reading blips.  A gap longer than gap_s starts a fresh baseline.
+    Returns {"people": est. visitors, "people_peak": most at once, "samples": n}."""
+    if not samples:
+        return {"people": 0, "people_peak": 0, "samples": 0}
+    smooth = _median3([c for _, c in samples])
+    total, prev, prev_ts = 0, 0, None
+    for (ts, _), c in zip(samples, smooth):
+        if prev_ts is not None and ts - prev_ts > gap_s:
+            prev = 0
+        if c > prev:
+            total += c - prev
+        prev, prev_ts = c, ts
+    return {"people": int(total), "people_peak": int(max(smooth)), "samples": len(samples)}
 
 
 # --------------------------------------------------------------------------
@@ -671,6 +974,10 @@ class Daemon:
         self.shared = {"fpp_playing": False, "fpp_last_playing": 0.0, "fpp_known": False,
                        "sync": {}, "warnings": []}
         self.sync_q = queue.Queue()
+        self.people = {"ok": None, "error": "", "last_poll": 0, "last_ok_ts": 0, "latest_count": None,
+                       "latest_ts": None, "rows": 0, "fails": 0, "skew_s": None}
+        self.people_test = None        # result of the last "Test board" click (shown in the UI)
+        self._people_cache = None
         self.stats_dirty = True
         self._today_cache = None
         self._season_cache = None
@@ -856,7 +1163,7 @@ class Daemon:
             self.calibration = {"id": cid, "until": time.monotonic() + 6.0, "samples": []}
             self.set_result(cid, True, "Calibrating for 6 seconds - keep the road clear...")
             self.last_result["pending"] = True
-        elif name in ("sync_now", "sync_test"):
+        elif name in ("sync_now", "sync_test", "people_test", "people_poll"):
             self.sync_q.put(cmd)
         else:
             self.set_result(cid, False, "Unknown command")
@@ -890,7 +1197,7 @@ class Daemon:
 
     def write_stats(self):
         since = (datetime.date.today() - datetime.timedelta(days=400)).isoformat()
-        days = self.store.days(since)
+        days = self.with_people(self.store.days(since), since)
         nights = [d for d in days if d["total"] > 0]
         best = max(nights, key=lambda d: d["total"]) if nights else None
         atomic_write_json(self.paths["stats"], {
@@ -924,6 +1231,12 @@ class Daemon:
         with self.lock:
             sync = dict(self.shared["sync"])
             fpp_playing = self.shared["fpp_playing"]
+        pinfo = dict(self.people)
+        if self.cfg["people_enabled"]:
+            if pinfo["ok"] is False and pinfo["fails"] >= 2:
+                warnings.append("Crowd board: " + pinfo["error"])
+            elif pinfo.get("clock_warning"):
+                warnings.append("Crowd board: " + pinfo["clock_warning"])
         if self.cfg["sync_enabled"] and sync.get("last_ok") is False:
             warnings.append("Last website sync failed: " + str(sync.get("message", "")))
         det = self.detector
@@ -962,6 +1275,14 @@ class Daemon:
             "sync": sync,
             "sync_enabled": self.cfg["sync_enabled"],
             "result": self.last_result,
+            "people": {
+                "enabled": self.cfg["people_enabled"],
+                "host": self.cfg["people_host"],
+                "interval_min": self.cfg["people_interval_min"],
+                "status": pinfo,
+                "today": self.people_today(sd) if self.cfg["people_enabled"] else None,
+                "test": self.people_test,
+            },
             "warnings": warnings,
         })
 
@@ -982,6 +1303,134 @@ class Daemon:
             if playing:
                 self.shared["fpp_last_playing"] = time.time()
 
+    # ---- BaldrickSignals crowd board -------------------------------------
+    def row_counted(self, dt):
+        """Does a board reading taken at dt fall inside the show hours?  Uses the show schedule;
+        'playing' mode has no history of FPP state, so the schedule is used if there is one."""
+        mode = self.cfg["schedule_mode"]
+        if mode == "always" or not self.cfg["schedules"]:
+            return True
+        return schedule_active(self.cfg["schedules"], dt)
+
+    def people_poll(self, kind="auto", test=False):
+        """Download the board's CSV and import new readings.  Returns (ok, message)."""
+        c = self.cfg
+        host = c["people_host"]
+        now = time.time()
+        ok, payload = fetch_board_csv(host)
+        info = self.people
+        info["last_poll"] = int(now)
+        if not ok:
+            info.update(ok=False, error=payload, fails=info["fails"] + 1)
+            if test:
+                self.people_test = {"ts": int(now), "ok": False, "message": payload, "lines": []}
+            log.warning("Crowd board: %s", payload)
+            return False, payload
+        parsed = parse_board_csv(payload, c["people_time_col"], c["people_count_col"], c["people_clock"])
+        hdr = parsed["header"]
+
+        def colname(i):
+            if i is None:
+                return "none"
+            return "column %d%s" % (i + 1, (" (%s)" % hdr[i]) if hdr and i < len(hdr) and hdr[i] else "")
+
+        detail = {"ts": int(now), "ok": parsed["ok"], "lines": parsed["lines"], "rows": parsed["total_rows"],
+                  "time_col": colname(parsed["time_col"]) + (" + next column" if parsed["combined"] else ""),
+                  "count_col": colname(parsed["count_col"]), "delimiter": parsed["delimiter"],
+                  "clock": c["people_clock"], "message": ""}
+        if not parsed["ok"]:
+            info.update(ok=False, error=parsed["error"], fails=info["fails"] + 1)
+            detail["message"] = parsed["error"]
+            if test:
+                self.people_test = detail
+            log.warning("Crowd board CSV: %s", parsed["error"])
+            return False, parsed["error"]
+
+        rows = parsed["rows"]
+        if parsed["time_col"] is None:     # counts only: take the newest value as 'now'
+            rows = [(now, rows[-1][1])]
+            detail["note"] = "No timestamp column found - using the newest count at the time of each check."
+        latest_ts, latest_count = rows[-1]
+        skew = now - latest_ts
+        info.update(ok=True, error="", fails=0, last_ok_ts=int(now), latest_count=latest_count,
+                    latest_ts=int(latest_ts), rows=parsed["total_rows"], skew_s=int(skew))
+        detail.update(latest_count=latest_count, latest_ts=int(latest_ts), skew_s=int(skew))
+        problems = []
+        if skew < -300:
+            problems.append("The board's clock is %d min ahead of the Pi - check the 'Board clock' setting." % round(-skew / 60))
+        info["clock_warning"] = problems[0] if problems else ""
+        msg = "Board OK: %d rows, newest reading %d device(s) at %s." % (
+            parsed["total_rows"], latest_count, datetime.datetime.fromtimestamp(latest_ts).strftime("%Y-%m-%d %H:%M:%S"))
+        if not test:
+            last_ts = float(self.store.meta_get("people_last_ts", 0) or 0)
+            floor = now - 90 * 86400
+            new = [(t, cnt) for t, cnt in rows if t > last_ts and t >= floor and t <= now + 3600]
+            batch = []
+            for t, cnt in new:
+                dt = datetime.datetime.fromtimestamp(t)
+                batch.append((t, show_date_for(dt, c["rollover_hour"]), cnt, self.row_counted(dt)))
+            added = self.store.add_people_samples(batch)
+            if new:
+                self.store.meta_set("people_last_ts", int(max(t for t, _ in new)))
+            self.store.people_prune()
+            self.stats_dirty = True
+            self._people_cache = None
+            if added:
+                log.info("Crowd board (%s): %d new reading(s), latest %d", kind, added, latest_count)
+            msg += " %d new reading(s) saved." % added
+        else:
+            would = sum(1 for t, _ in rows if t >= now - 86400)
+            detail["message"] = msg
+            detail["recent_rows"] = would
+            self.people_test = detail
+            if problems:
+                msg += " " + problems[0]
+        return True, msg
+
+    def people_scheduler(self, state):
+        c = self.cfg
+        if not c["people_enabled"] or not c["people_host"]:
+            return
+        now = time.time()
+        active, _ = self.counting_now()
+        if active:
+            state["active_ts"] = now
+        if state.get("host") != c["people_host"]:        # new address: check straight away
+            state.update(host=c["people_host"], next=0.0)
+        if now < state.get("next", 0.0):
+            return
+        interval = c["people_interval_min"] * 60
+        # outside the show (and for 30 min after it) a slow check keeps the status fresh without
+        # hammering the board; its history CSV makes up for anything missed
+        quiet = (not active) and now - state.get("active_ts", 0) > 1800
+        state["next"] = now + (max(interval, 3600) if quiet else interval)
+        try:
+            self.people_poll("auto")
+        except Exception:
+            log.exception("Crowd board poll failed")
+
+    def people_today(self, sd):
+        key = (self.store.version, sd)
+        if self._people_cache is None or self._people_cache[0] != key:
+            self._people_cache = (key, self.store.people_days(sd, sd).get(sd, {"people": 0, "people_peak": 0, "samples": 0}))
+        return self._people_cache[1]
+
+    def with_people(self, days, since, until=None):
+        """Add the crowd numbers to day dicts (and nights that only have crowd readings)."""
+        if not self.cfg["people_enabled"]:
+            return days
+        pd = self.store.people_days(since, until)
+        have = {d["date"] for d in days}
+        out = [dict(d) for d in days]
+        for sd in pd:
+            if sd not in have:
+                out.append({"date": sd, "total": 0, "offhours": 0, "hours": [0] * 24, "first_ts": None, "last_ts": None})
+        for d in out:
+            if d["date"] in pd:
+                d["people"] = pd[d["date"]]["people"]
+                d["people_peak"] = pd[d["date"]]["people_peak"]
+        return sorted(out, key=lambda d: d["date"])
+
     def build_payload(self, live):
         days_back = 1 if live else self.cfg["sync_days"]
         sd_today = show_date_for(datetime.datetime.now(), self.cfg["rollover_hour"])
@@ -992,7 +1441,7 @@ class Daemon:
             "show_name": self.cfg["show_name"],
             "plugin_version": VERSION,
             "sent_at": int(time.time()),
-            "days": self.store.days(since),
+            "days": self.with_people(self.store.days(since), since),
         }
 
     def record_sync(self, ok, message, kind, data=None):
@@ -1014,6 +1463,11 @@ class Daemon:
         if not c["wp_url"] or not c["secret"]:
             self.record_sync(False, "Website address and shared secret are required.", kind)
             return False, "Website address and shared secret are required."
+        if c["people_enabled"] and c["people_host"] and not live:
+            try:
+                self.people_poll("pre-upload")      # pick up the newest readings before sending
+            except Exception:
+                log.exception("Crowd board poll before upload failed")
         ok, msg, data = post_signed(c["wp_url"], "ingest", self.build_payload(live),
                                     c["secret"], c["verify_tls"])
         self.record_sync(ok, "Uploaded OK" if ok else msg, kind, data)
@@ -1026,6 +1480,9 @@ class Daemon:
     def run_sync_command(self, cmd):
         c = self.cfg
         cid = cmd.get("id")
+        if cmd.get("cmd") in ("people_test", "people_poll"):
+            ok, msg = self.people_poll("test" if cmd.get("cmd") == "people_test" else "manual", test=cmd.get("cmd") == "people_test")
+            return self.set_result(cid, ok, msg)
         if cmd.get("cmd") == "sync_test":
             if not c["wp_url"] or not c["secret"]:
                 return self.set_result(cid, False, "Enter the website address and shared secret first.")
@@ -1073,6 +1530,7 @@ class Daemon:
         next_fpp = 0.0
         next_stats = 0.0
         sync_state = {}
+        people_state = {}
         while not self.stop_evt.is_set():
             now = time.time()
             try:
@@ -1093,6 +1551,7 @@ class Daemon:
                     self.write_stats()
                     next_stats = now + 60
                 self.sync_scheduler(sync_state)
+                self.people_scheduler(people_state)
             except Exception:
                 log.exception("Housekeeping error")
             self.stop_evt.wait(1.0)

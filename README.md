@@ -7,6 +7,7 @@ serial port, keeps nightly and hourly totals, and uploads them to your WordPress
 Runs happily next to an LED sign on the same Pi. Python standard library only – nothing to `pip install`.
 
 ## Features
+* Optional **BaldrickSignals** crowd board support: estimated people per night, reported separately from cars
 * Live dashboard in FPP: tonight / last night / season totals, live distance bar, hourly and nightly charts, CSV export
 * **Test mode** (cars shown but not recorded) for aiming and tuning, one‑click **Calibrate empty road**
 * Smart counting: a car counts once when it has been in the beam for *confirm time*; slow, stopped or bumper‑to‑bumper cars are not double counted; single glitch frames are ignored
@@ -67,6 +68,20 @@ If an LED-panel HAT/bonnet uses those GPIO pins, use Option 1 instead.
 4. With the road clear, press **Calibrate empty road** – it sets *Farthest distance* just inside whatever the sensor sees as background.
 5. Turn test mode off. Done.
 6. **Website Sync tab** – paste the website address and secret from the WordPress plugin, press **Test connection**, tick *Upload to website*, choose the nightly time.
+
+## Counting people with a BaldrickSignals board (optional)
+A car can hold several people, so the plugin can also read a [BaldrickSignals](https://www.baldrickboard.com/en/boards/baldricksignals) crowd board and report **people (estimated)** separately from cars.
+
+1. Put the board on the same network as the Pi and note its IP address (give it a fixed IP in your router).
+2. In FPP open **Status/Control → Car Counter → Crowd (phones)**, tick **Use BaldrickSignals**, enter the IP address and press **Save**.
+3. Press **Test board**. You'll see the first and last lines the board returned and which columns were detected as the time and the count. If the newest reading isn't "about now", change **Board clock** (local time vs UTC). If it picked the wrong column, set the **Count column** / **Time column** numbers by hand.
+4. Choose **Check the board every (min)** – the default is 5. Each check downloads the board's `/csv` history, so don't set it very low. Outside show hours it only checks hourly.
+
+What is recorded per show night, using only readings inside your show schedule:
+* **People (est.)** – the estimated number of visitors: the arrivals seen as the board's count rises through the evening (one-reading blips are ignored).
+* **Peak** – the most devices seen at once.
+
+These go to the website next to the car numbers (they never change the car count), and appear on the Dashboard and in the CSV download. The board's own *offset* and *multiplier* settings are applied by the board before this plugin sees the number. Notes: the board's CSV layout isn't documented by the maker, so the plugin auto-detects it – please use **Test board** to confirm; the figures are estimates, not a head count.
 
 ## How counting works
 ```

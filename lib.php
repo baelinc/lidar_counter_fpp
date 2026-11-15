@@ -34,12 +34,23 @@ function cc_schema() {
         'sync_days'         => array('int', 7, array(1, 60)),
         'live_interval_min' => array('int', 0, array(0, 240)),
         'verify_tls'        => array('bool', true, null),
+        'people_enabled'      => array('bool', false, null),
+        'people_host'         => array('str', '', 120),
+        'people_interval_min' => array('int', 5, array(1, 120)),
+        'people_clock'        => array('choice', 'local', array('local', 'utc')),
+        'people_time_col'     => array('int', 0, array(0, 40)),
+        'people_count_col'    => array('int', 0, array(0, 40)),
     );
 }
 
 function cc_coerce($key, $value) {
     $s = cc_schema()[$key];
     list($type, $def, $extra) = $s;
+    if ($key === 'people_host') {   // accept "http://192.168.1.50/csv" and keep just the host
+        $v = preg_replace('#^[a-zA-Z][a-zA-Z0-9+.-]*://#', '', trim((string)$value));
+        $v = preg_split('#[/?]#', $v)[0];
+        return preg_match('/^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?(:\d{1,5})?$/', $v) ? substr($v, 0, 120) : '';
+    }
     switch ($type) {
         case 'str':
             return substr(trim((string)$value), 0, $extra);
