@@ -1,0 +1,94 @@
+/* Standalone look: friendly cards, big touch targets, light + dark, works on a phone at the roadside. */
+:root {
+  --bg: #f3f5f9; --surface: #ffffff; --ink: #1a2233; --muted: #5d687d; --edge: #e3e8f0;
+  --green: #1b7f4b; --green-soft: #e4f4ec; --red: #c62f2f; --red-soft: #fdeaea; --amber: #b86e00; --amber-soft: #fff3df;
+  --blue: #2563eb; --shadow: 0 1px 2px rgba(20,30,60,.06), 0 6px 18px rgba(20,30,60,.07);
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0e1320; --surface: #171e2e; --ink: #e8edf7; --muted: #9aa6bd; --edge: #263049;
+    --green: #38b36f; --green-soft: #163a28; --red: #ff6b6b; --red-soft: #3d1c1f; --amber: #f0a43a; --amber-soft: #3a2b12; --blue: #6ea0ff;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 22px rgba(0,0,0,.35); }
+}
+html { background: var(--bg); }
+body { background: radial-gradient(1200px 400px at 50% -120px, rgba(198,47,47,.10), transparent 70%), var(--bg); color: var(--ink); padding: 0 0 3rem; }
+body > header { max-width: 1100px; margin: 0 auto; padding: 1.1rem 1rem .2rem; display: flex; align-items: center; gap: .7rem; opacity: 1; font-size: 1rem; color: var(--muted); }
+body > header .logo { width: 2.4rem; height: 2.4rem; border-radius: 12px; background: linear-gradient(135deg, #d63b3b, #8e1b1b); display: flex; align-items: center; justify-content: center; color: #fff; font-size: 1.3rem; box-shadow: var(--shadow); }
+body > header b { color: var(--ink); font-size: 1.15rem; display: block; line-height: 1.1; }
+
+body #cc { max-width: 1100px; margin: 0 auto; padding: 0 1rem; --line: var(--edge); --accent: var(--green); --warn: var(--amber); --bad: var(--red); }
+body #cc > h2 { display: none; }
+body #cc .cc-pills { margin: .6rem 0 1rem; gap: .5rem; }
+body #cc .pill { border: 0; border-radius: 999px; padding: .35rem .85rem .35rem .75rem; font-size: .88rem; font-weight: 600; background: var(--edge); color: var(--muted); display: inline-flex; align-items: center; gap: .45rem; }
+body #cc .pill::before { content: ""; width: .5rem; height: .5rem; border-radius: 50%; background: currentColor; opacity: .85; }
+body #cc .pill.ok { background: var(--green-soft); color: var(--green); }
+body #cc .pill.warn { background: var(--amber-soft); color: var(--amber); }
+body #cc .pill.bad { background: var(--red-soft); color: var(--red); }
+
+body #cc .tabs { gap: .35rem; border: 0; background: var(--surface); padding: .35rem; border-radius: 14px; box-shadow: var(--shadow); overflow-x: auto; margin-bottom: 1.1rem; -webkit-overflow-scrolling: touch; }
+body #cc .tabs button { flex: 0 0 auto; border: 0; border-radius: 10px; padding: .65rem 1.05rem; font-size: .97rem; font-weight: 600; color: var(--muted); min-height: 44px; background: none; }
+body #cc .tabs button:hover { color: var(--ink); background: var(--bg); }
+body #cc .tabs button.active { background: var(--green); color: #fff; }
+
+body #cc .panel, body #cc .card { background: var(--surface); border: 0; border-radius: 16px; box-shadow: var(--shadow); }
+body #cc .panel { padding: 1.2rem 1.3rem; margin-bottom: 1.1rem; }
+body #cc .panel h3 { font-size: 1.12rem; margin: 0 0 .7rem; }
+body #cc .grid { gap: 1rem; margin-bottom: 1.1rem; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+body #cc .card { padding: 1.1rem 1.25rem; }
+body #cc .card .sub { color: var(--muted); opacity: 1; font-size: .85rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+body #cc .card .sub:last-child { text-transform: none; letter-spacing: 0; font-weight: 400; margin-top: .15rem; }
+body #cc .card .big { font-size: 3rem; margin: .2rem 0; letter-spacing: -.02em; }
+body #cc .grid > .card:first-child { background: linear-gradient(135deg, #d13a3a 0%, #8e1b1b 100%); color: #fff; grid-column: span 2; }
+body #cc .grid > .card:first-child .sub { color: rgba(255,255,255,.85); }
+body #cc .grid > .card:first-child .big { font-size: 4.4rem; }
+@media (max-width: 560px) { body #cc .grid > .card:first-child { grid-column: 1 / -1; } body #cc .grid { grid-template-columns: 1fr 1fr; } body #cc .card .big { font-size: 2.3rem; } body #cc .grid > .card:first-child .big { font-size: 3.6rem; } }
+
+body #cc button.b, body #cc a.b { min-height: 44px; border: 1px solid var(--edge); background: var(--surface); color: var(--ink); border-radius: 10px; padding: .55rem 1.05rem; font-weight: 600; font-size: .95rem; box-shadow: 0 1px 1px rgba(20,30,60,.05); display: inline-flex; align-items: center; justify-content: center; }
+body #cc button.b:hover, body #cc a.b:hover { background: var(--bg); }
+body #cc button.b.primary { background: var(--green); border-color: var(--green); color: #fff; }
+body #cc button.b.primary:hover { filter: brightness(1.08); background: var(--green); }
+body #cc button.b.danger { color: var(--red); border-color: var(--red); background: var(--surface); }
+body #cc button.b.on { background: var(--amber); border-color: var(--amber); color: #fff; }
+body #cc .row { gap: .6rem; margin: .8rem 0 .2rem; }
+
+body #cc .field { gap: .35rem 1.2rem; margin: 1rem 0; }
+body #cc .field label { padding-top: .6rem; }
+body #cc input[type=text], body #cc input[type=number], body #cc input[type=password], body #cc input[type=time], body #cc select {
+  background: var(--bg); color: var(--ink); border: 1.5px solid var(--edge); border-radius: 10px; min-height: 44px; padding: .55rem .8rem !important; font-size: 1rem; box-shadow: none; }
+body #cc input:focus, body #cc select:focus { outline: none; border-color: var(--green); box-shadow: 0 0 0 3px rgba(27,127,75,.2); }
+body #cc input[type=checkbox] { width: 1.4rem; height: 1.4rem; accent-color: var(--green); }
+body #cc .help { color: var(--muted); opacity: 1; font-size: .86rem; line-height: 1.4; }
+body #cc .msg.ok { color: var(--green); } body #cc .msg.bad { color: var(--red); }
+
+body #cc .track { height: 34px; border-radius: 10px; border: 0; background: var(--bg); overflow: hidden; }
+body #cc .zone { background: var(--green-soft); border-color: var(--green); }
+body #cc .marker { background: var(--blue); width: 5px; border-radius: 3px; top: 0; bottom: 0; }
+body #cc .marker.hit { background: var(--red); }
+body #cc .chart .bar { background: linear-gradient(180deg, #2fa468, var(--green)); border-radius: 6px 6px 0 0; }
+body #cc .chart .val { color: var(--muted); opacity: 1; }
+body #cc .labels { color: var(--muted); opacity: 1; }
+body #cc table.t th { color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; }
+body #cc table.t th, body #cc table.t td { border-color: var(--edge); padding: .55rem .6rem; }
+body #cc table.t tbody tr:hover { background: var(--bg); }
+body #cc pre { background: var(--bg); border: 0; border-radius: 10px; color: var(--ink); }
+body #cc .warnbox { background: var(--amber-soft); border: 0; border-left: 4px solid var(--amber); color: var(--amber); border-radius: 10px; padding: .8rem 1rem; }
+body #cc .sched-row { background: var(--bg); border: 0; border-radius: 12px; }
+body #cc .sched-days button { background: var(--surface); border: 1.5px solid var(--edge); color: var(--muted); }
+body #cc .sched-days button.on { background: var(--green); border-color: var(--green); color: #fff; }
+body #cc .sched-quick button { color: var(--blue); }
+body #cc #setupBox { border-left: 5px solid var(--green); }
+body #cc .setup-ico { border-color: var(--edge); }
+body #cc .setup-item.done .setup-ico { background: var(--green); border-color: var(--green); }
+body #cc .setup-item { border-color: var(--edge); }
+body #cc .lane-now { color: var(--blue); }
+
+/* keep form controls inside their card on narrow screens */
+body #cc .field > div { min-width: 0; }
+body #cc input[type=text], body #cc input[type=number], body #cc input[type=password], body #cc input[type=time], body #cc select { box-sizing: border-box; max-width: 100% !important; }
+body #cc .help, body #cc .msg, body #cc .setup-txt { overflow-wrap: anywhere; }
+@media (max-width: 700px) {
+  body #cc .panel { padding: 1rem; }
+  body #cc .field label { padding-top: 0; }
+  body #cc input[type=text], body #cc input[type=number], body #cc input[type=password], body #cc input[type=time], body #cc select { width: 100%; }
+  body #cc .row .b { flex: 1 1 auto; }
+  body #cc .lane-step .b { flex: 1 1 100%; }
+}

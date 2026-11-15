@@ -6,12 +6,18 @@ serial port, keeps nightly and hourly totals, and uploads them to your WordPress
 
 Runs happily next to an LED sign on the same Pi. Python standard library only – nothing to `pip install`.
 
+> **No FPP at the roadside?** This repo also contains a **standalone version** for a plain Raspberry Pi (for example a Pi Zero 2 W
+> at the end of the street) with its own friendly web page – see [`standalone/README.md`](standalone/README.md).
+
 ## Features
+* Can follow a Falcon Player on another Pi: enter its address and cars are only counted while that show is playing (falls back to your schedule if it cannot be reached)
+* **Count only one lane** helper: record the near and far lane readings and cars leaving (the near lane) are ignored, so each car is counted once on a two‑way road
+* Setup checklist on the dashboard
 * Optional **BaldrickSignals** crowd board support: estimated people per night, reported separately from cars
 * Live dashboard in FPP: tonight / last night / season totals, live distance bar, hourly and nightly charts, CSV export
 * **Test mode** (cars shown but not recorded) for aiming and tuning, one‑click **Calibrate empty road**
 * Smart counting: a car counts once when it has been in the beam for *confirm time*; slow, stopped or bumper‑to‑bumper cars are not double counted; single glitch frames are ignored
-* Counting schedule: any number of schedule entries, each with its own days and start/end time (e.g. Sun–Thu 5:30–10:00 PM **and** Fri–Sat 5:30–11:00 PM). An entry that ends before it starts runs past midnight and belongs to the day it started. Or count only while FPP is playing (+grace period), or always. Detections outside the schedule are kept as **off‑hours** and never added to totals
+* Counting schedule: any number of schedule entries, each with its own days and start/end time (e.g. Sun–Thu 5:30–10:00 PM **and** Fri–Sat 5:30–11:00 PM). An entry that ends before it starts runs past midnight and belongs to the day it started. Or count only while FPP is playing (+grace period; on the FPP Pi itself, or another Falcon Player by its address), or always. Detections outside the schedule are kept as **off‑hours** and never added to totals
 * "Show night" rollover (default 6 am) so cars after midnight belong to the right night
 * Manual +1 / −1 / reset tonight (reset is recoverable – events are voided, not deleted)
 * Warnings: sensor silent, beam blocked for too long, last website upload failed

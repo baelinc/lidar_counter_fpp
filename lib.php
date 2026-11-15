@@ -7,6 +7,9 @@ define('CC_RUN_DIR',  getenv('CC_RUN_DIR')  ?: '/dev/shm/fpp-car-counter');
 define('CC_LOG_FILE', getenv('CC_LOG_FILE') ?: '/home/fpp/media/logs/fpp-car-counter.log');
 define('CC_ERR_FILE', getenv('CC_ERR_FILE') ?: '/home/fpp/media/logs/fpp-car-counter.err');
 
+/* Standalone install (plain Raspberry Pi, no FPP): see standalone/. */
+define('CC_STANDALONE', getenv('CC_STANDALONE') === '1');
+
 /* key => [type, default, extra]   (must mirror SCHEMA in counter/car_counter.py) */
 function cc_schema() {
     return array(
@@ -23,6 +26,7 @@ function cc_schema() {
         'clear_ms'          => array('int', 800, array(100, 30000)),
         'max_dwell_s'       => array('int', 120, array(5, 3600)),
         'schedule_mode'     => array('choice', 'window', array('always', 'window', 'playing')),
+        'fpp_host'          => array('str', '', 120),
         'window_start'      => array('time', '17:00', null),
         'window_end'        => array('time', '22:00', null),
         'grace_min'         => array('int', 10, array(0, 240)),
@@ -46,7 +50,7 @@ function cc_schema() {
 function cc_coerce($key, $value) {
     $s = cc_schema()[$key];
     list($type, $def, $extra) = $s;
-    if ($key === 'people_host') {   // accept "http://192.168.1.50/csv" and keep just the host
+    if ($key === 'people_host' || $key === 'fpp_host') {   // accept "http://192.168.1.50/csv" and keep just the host
         $v = preg_replace('#^[a-zA-Z][a-zA-Z0-9+.-]*://#', '', trim((string)$value));
         $v = preg_split('#[/?]#', $v)[0];
         return preg_match('/^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?(:\d{1,5})?$/', $v) ? substr($v, 0, 120) : '';
@@ -104,6 +108,7 @@ function cc_config() {
     }
     if ($out['max_cm'] <= $out['min_cm']) $out['max_cm'] = $out['min_cm'] + 10;
     $out['wp_url'] = rtrim($out['wp_url'], '/');
+    if (CC_STANDALONE && $out['schedule_mode'] === 'playing' && $out['fpp_host'] === '') $out['schedule_mode'] = 'window';
     if ($raw === null || !array_key_exists('connection', $raw)) {   // config saved before the option existed
         $sp = ($raw !== null && isset($raw['serial_port'])) ? trim((string)$raw['serial_port']) : '';
         if ($sp === '') { $out['connection'] = 'usb'; }
@@ -171,8 +176,12 @@ function cc_send_command($cmd) {
 
 function cc_service($op) {
     if (!in_array($op, array('start', 'stop', 'restart'), true)) return 'bad op';
-    $script = __DIR__ . '/scripts/service.sh';
     $out = array();
+    if (CC_STANDALONE) {   // systemd runs the counter; the web user may restart only that one unit (sudoers)
+        exec('sudo -n ' . escapeshellarg(getenv('CC_SYSTEMCTL') ?: 'systemctl') . ' ' . escapeshellarg($op) . ' car-counter 2>&1', $out);
+        return implode("\n", $out) ?: 'Done';
+    }
+    $script = __DIR__ . '/scripts/service.sh';
     exec(escapeshellarg($script) . ' ' . $op . ' 2>&1', $out);
     return implode("\n", $out);
 }

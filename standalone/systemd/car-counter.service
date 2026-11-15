@@ -1,0 +1,22 @@
+[Unit]
+Description=Car Counter - lidar vehicle counter
+After=network-online.target time-sync.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=carcounter
+Group=carcounter
+SupplementaryGroups=dialout
+EnvironmentFile=/etc/car-counter/car-counter.env
+ExecStart=/usr/bin/python3 -u @APP@/counter/car_counter.py
+Restart=on-failure
+RestartSec=5
+# exit 75 = another copy already holds the lock; do not loop
+RestartPreventExitStatus=75
+NoNewPrivileges=true
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,19 @@
+[Unit]
+Description=Car Counter - settings web page
+After=network.target car-counter.service
+
+[Service]
+Type=simple
+User=carcounter
+Group=carcounter
+EnvironmentFile=/etc/car-counter/car-counter.env
+Environment=PHP_CLI_SERVER_WORKERS=3
+# sudo (used only to restart the counter unit) needs privileges, so NoNewPrivileges is not set here
+ExecStart=/usr/bin/php -S 0.0.0.0:${CC_WEB_PORT} -t @APP@/standalone/web @APP@/standalone/web/router.php
+Restart=always
+RestartSec=5
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

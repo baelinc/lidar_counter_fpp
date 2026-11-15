@@ -35,7 +35,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 USER_AGENT = "fpp-car-counter/" + VERSION
 
 log = logging.getLogger("car-counter")
@@ -44,6 +44,10 @@ log = logging.getLogger("car-counter")
 # --------------------------------------------------------------------------
 # Paths
 # --------------------------------------------------------------------------
+# Set by the standalone install (a plain Raspberry Pi, no FPP): there is no FPP to ask whether a show is playing.
+STANDALONE = os.environ.get("CC_STANDALONE", "") == "1"
+
+
 def get_paths():
     data = os.environ.get("CC_DATA_DIR", "/home/fpp/media/config/fpp-car-counter")
     run = os.environ.get("CC_RUN_DIR", "/dev/shm/fpp-car-counter")
@@ -104,6 +108,7 @@ SCHEMA = {
     "clear_ms": ("int", 800, 100, 30000),
     "max_dwell_s": ("int", 120, 5, 3600),
     "schedule_mode": ("choice", "window", ["always", "window", "playing"]),
+    "fpp_host": ("str", "", 120),                    # master Falcon Player to ask "is a show playing?" ("" = this Pi)
     "window_start": ("time", "17:00"),
     "window_end": ("time", "22:00"),
     "grace_min": ("int", 10, 0, 240),
@@ -233,6 +238,9 @@ def normalize_config(raw):
         cfg["max_cm"] = cfg["min_cm"] + 10
     cfg["wp_url"] = cfg["wp_url"].rstrip("/")
     cfg["people_host"] = normalize_board_host(cfg["people_host"])
+    cfg["fpp_host"] = normalize_board_host(cfg["fpp_host"])
+    if STANDALONE and cfg["schedule_mode"] == "playing" and not cfg["fpp_host"]:
+        cfg["schedule_mode"] = "window"          # nothing to ask without the Falcon Player's address
     return cfg
 
 
@@ -277,6 +285,9 @@ class Config:
 
     def __getitem__(self, key):
         return self.values[key]
+
+    def get(self, key, default=None):
+        return self.values.get(key, default)
 
 
 # --------------------------------------------------------------------------
@@ -455,11 +466,15 @@ def schedule_active(entries, dt):
     return False
 
 
-def counting_state(cfg, dt, fpp_playing, fpp_last_playing_ts, now_ts):
+def counting_state(cfg, dt, fpp_playing, fpp_last_playing_ts, now_ts, fpp_known=True):
     """Returns (counting_active, reason)."""
     mode = cfg["schedule_mode"]
     if mode == "always":
         return True, "always on"
+    if mode == "playing" and cfg.get("fpp_host") and not fpp_known and cfg["schedules"]:
+        # A remote Falcon Player cannot be reached (Wi-Fi drop, FPP rebooting): rather than count nothing, use the schedule.
+        inside = schedule_active(cfg["schedules"], dt)
+        return inside, "FPP unreachable - using schedule (" + ("inside" if inside else "outside") + " show hours)"
     if mode == "window":
         inside = schedule_active(cfg["schedules"], dt)
         if not cfg["schedules"]:
@@ -1123,7 +1138,8 @@ class Daemon:
         with self.lock:
             playing = self.shared["fpp_playing"]
             last = self.shared["fpp_last_playing"]
-        return counting_state(self.cfg, now_dt or datetime.datetime.now(), playing, last, time.time())
+            known = self.shared["fpp_known"]
+        return counting_state(self.cfg, now_dt or datetime.datetime.now(), playing, last, time.time(), known)
 
     # ---- commands from the web UI ---------------------------------------
     def process_commands(self):
@@ -1289,6 +1305,7 @@ class Daemon:
             "test_count": self.test_count,
             "calibrating": self.calibration is not None,
             "fpp_playing": fpp_playing,
+            "fpp": {"host": self.cfg["fpp_host"], "known": self.shared["fpp_known"], "playing": fpp_playing},
             "sync": sync,
             "sync_enabled": self.cfg["sync_enabled"],
             "result": self.last_result,
@@ -1305,10 +1322,13 @@ class Daemon:
 
     # ---- background thread: FPP status, stats file, website sync ---------
     def poll_fpp(self):
+        host = self.cfg["fpp_host"] or ("" if STANDALONE else "127.0.0.1")
+        if not host:
+            return
         playing = False
         known = False
         try:
-            with urllib.request.urlopen("http://127.0.0.1/api/fppd/status", timeout=2) as resp:
+            with urllib.request.urlopen("http://%s/api/fppd/status" % host, timeout=3) as resp:
                 data = json.loads(resp.read(1 << 18).decode("utf-8", "replace"))
             known = True
             playing = str(data.get("status_name", "")).lower() == "playing"

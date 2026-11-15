@@ -14,7 +14,7 @@ if [ -f "$CONFIG" ]; then
     if grep -q '^enable_uart=' "$CONFIG"; then
         sed -i 's/^enable_uart=.*/enable_uart=1/' "$CONFIG"
     else
-        printf '\n# Added by FPP Car Counter\nenable_uart=1\n' >> "$CONFIG"
+        printf '\n# Added by Car Counter\nenable_uart=1\n' >> "$CONFIG"
     fi
     echo "Updated $CONFIG (backup: $CONFIG.bak.$STAMP)"
 else
@@ -29,4 +29,5 @@ fi
 
 systemctl disable --now serial-getty@ttyS0.service serial-getty@ttyAMA0.service 2>/dev/null || true
 usermod -a -G dialout fpp 2>/dev/null || true
+usermod -a -G dialout carcounter 2>/dev/null || true
 echo "Done. Reboot the Pi, then pick /dev/serial0 as the serial port in the Car Counter settings."
