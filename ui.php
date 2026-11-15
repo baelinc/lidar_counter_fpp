@@ -156,7 +156,7 @@ $ccPlugin = basename(__DIR__);
     </div>
     <div class="panel"><h3>Board status</h3><div id="peopleStatus" class="msg">Not enabled.</div>
       <div id="peopleTestBox" style="display:none">
-        <div class="sub" style="margin-top:.6rem">What the plugin read from <code>http://&lt;board&gt;/csv</code> (first and last lines):</div>
+        <div class="sub" style="margin-top:.6rem">What the plugin read from the board (first and last lines):</div>
         <pre id="peopleLines" style="max-height:11rem;overflow:auto"></pre>
         <div class="msg" id="peopleDetect"></div>
       </div>
@@ -249,7 +249,7 @@ $ccPlugin = basename(__DIR__);
     fPeople: [
       { k: 'people_enabled', l: 'Use BaldrickSignals', t: 'checkbox' },
       { k: 'people_host', l: 'Board IP address', t: 'text', ph: '192.168.1.50', h: 'The address shown on the board’s web page (or baldrickboard.local). Give the board a fixed IP in your router so it does not change.' },
-      { k: 'people_interval_min', l: 'Check the board every (min)', t: 'number', h: 'How often to read the board. Each check downloads the board’s history, so 5 minutes or more is kind to it. Outside show hours it checks hourly.' },
+      { k: 'people_interval_min', l: 'Check the board every (min)', t: 'number', h: 'How often to read the board. Each check only downloads the readings since the last check. Outside show hours it checks hourly.' },
       { k: 'people_clock', l: 'Board clock', t: 'select', o: [['local', 'Shows local time (same as this Pi)'], ['utc', 'Shows UTC']], h: 'Only matters if the board’s timestamps have no time zone. Use “Test board” to confirm the newest reading is about now.' },
       { k: 'people_time_col', l: 'Time column (advanced)', t: 'number', h: '0 = detect automatically. Otherwise the column number (1 = first) holding the timestamp.' },
       { k: 'people_count_col', l: 'Count column (advanced)', t: 'number', h: '0 = detect automatically. Otherwise the column number holding the crowd/device count. Use “Test board” to see what was detected.' }
@@ -562,7 +562,7 @@ $ccPlugin = basename(__DIR__);
     if (tr && tr.ts) {
       box.style.display = '';
       $('peopleLines').textContent = (tr.lines || []).join('\n') || '(nothing received)';
-      var d = tr.ok ? 'Detected – time: ' + tr.time_col + ' · count: ' + tr.count_col + ' · ' + tr.rows + ' rows. ' + (tr.message || '') + (tr.note ? ' ' + tr.note : '') : (tr.message || 'Failed');
+      var d = (tr.url ? 'Read from ' + tr.url + '. ' : '') + (tr.ok ? 'Detected – time: ' + tr.time_col + ' · count: ' + tr.count_col + ' · ' + tr.rows + ' rows. ' + (tr.message || '') + (tr.note ? ' ' + tr.note : '') : (tr.message || 'Failed'));
       $('peopleDetect').textContent = d; $('peopleDetect').className = 'msg ' + (tr.ok ? 'ok' : 'bad');
     } else { box.style.display = 'none'; }
   }

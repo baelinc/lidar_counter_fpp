@@ -19,6 +19,14 @@ def local_ts(dt):
     return dt.timestamp()
 
 
+class UrlTests(unittest.TestCase):
+    def test_urls_prefer_log_endpoint_then_csv(self):
+        u = cc.board_urls("192.168.1.167", 1794633908)
+        self.assertEqual(u[0], "http://192.168.1.167/turnip_data_log/data?format=csv&mark_discontinuities=0&from=1794633908")
+        self.assertEqual(u[1], "http://192.168.1.167/csv")
+        self.assertEqual(cc.board_urls("", 5), [])
+
+
 class HostTests(unittest.TestCase):
     def test_normalize(self):
         n = cc.normalize_board_host
@@ -111,11 +119,15 @@ class FakeBoard:
     def __init__(self):
         self.body = ""
         self.status = 200
+        self.legacy = False          # True = older firmware without /turnip_data_log/data
+        self.requests = []
         outer = self
 
         class H(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
-                if self.path != "/csv":
+                outer.requests.append(self.path)
+                ok_path = self.path == "/csv" or (self.path.startswith("/turnip_data_log/data?") and not outer.legacy)
+                if not ok_path:
                     self.send_response(404); self.end_headers(); return
                 self.send_response(outer.status)
                 self.send_header("Content-Type", "text/csv")
@@ -235,6 +247,33 @@ class PollTests(unittest.TestCase):
         ok, msg = self.d.people_poll("test", test=True)
         self.assertTrue(ok)
         self.assertIn("ahead", msg)
+
+    def test_asks_only_for_new_readings(self):
+        self.board.body = self.csv_for([(18, 0, 3), (18, 5, 4)])
+        t0 = time.time()
+        self.d.people_poll("manual")
+        first = self.board.requests[-1]
+        self.assertIn("/turnip_data_log/data?format=csv&mark_discontinuities=0&from=", first)
+        frm = int(first.split("from=")[1])
+        self.assertAlmostEqual(frm, t0 - 7 * 86400, delta=30)          # first check catches up a week
+        self.d.people_poll("manual")
+        frm2 = int(self.board.requests[-1].split("from=")[1])
+        last = int(self.d.store.meta_get("people_last_ts"))
+        self.assertEqual(frm2, last - 900)                              # next checks start at the last reading
+
+    def test_older_firmware_falls_back_to_csv(self):
+        self.board.legacy = True
+        self.board.body = self.csv_for([(18, 0, 3), (18, 5, 4)])
+        ok, msg = self.d.people_poll("manual")
+        self.assertTrue(ok, msg)
+        self.assertTrue(self.board.requests[0].startswith("/turnip_data_log/data"))
+        self.assertEqual(self.board.requests[-1], "/csv")
+        self.assertIn("/csv", self.d.people_test["url"] if self.d.people_test else "/csv")
+
+    def test_test_result_reports_url(self):
+        self.board.body = self.csv_for([(18, 0, 3)])
+        self.d.people_poll("test", test=True)
+        self.assertIn("/turnip_data_log/data", self.d.people_test["url"])
 
     def test_status_json_has_people_block(self):
         self.board.body = self.csv_for([(18, 0, 3)])

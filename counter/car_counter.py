@@ -641,25 +641,42 @@ def normalize_board_host(text):
     return t if re.match(r"^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?(:\d{1,5})?$", t) else ""
 
 
-def fetch_board_csv(host, timeout=12, max_bytes=16 << 20):
-    """Download the board's CSV.  Returns (ok, text-or-error-message)."""
+def board_urls(host, since=None):
+    """Addresses to try, newest firmware first.  The board's log endpoint accepts a `from` time (epoch
+    seconds) so only new readings are downloaded; the older /csv endpoint returns the whole history."""
     host = normalize_board_host(host)
     if not host:
-        return False, "Enter the board's IP address (for example 192.168.1.50)."
-    url = "http://%s/csv" % host
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/csv,text/plain,*/*"})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read(max_bytes + 1)
-    except urllib.error.HTTPError as exc:
-        return False, "The board answered HTTP %d for /csv." % exc.code
-    except (OSError, urllib.error.URLError, ValueError) as exc:
-        reason = getattr(exc, "reason", exc)
-        return False, "Could not reach the board at %s (%s)." % (host, reason)
-    if len(raw) > max_bytes:
-        raw = raw[-max_bytes:]                      # keep the newest part; the oldest rows are the least useful
-        raw = raw[raw.find(b"\n") + 1:] if b"\n" in raw else raw
-    return True, raw.decode("utf-8", "replace")
+        return []
+    q = "format=csv&mark_discontinuities=0"
+    if since is not None:
+        q += "&from=%d" % max(0, int(since))
+    return ["http://%s/turnip_data_log/data?%s" % (host, q), "http://%s/csv" % host]
+
+
+def fetch_board_csv(host, since=None, timeout=12, max_bytes=16 << 20):
+    """Download the board's readings as CSV.  Returns (ok, text-or-error-message, url used)."""
+    urls = board_urls(host, since)
+    if not urls:
+        return False, "Enter the board's IP address (for example 192.168.1.50).", ""
+    error = ""
+    for url in urls:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/csv,text/plain,*/*"})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read(max_bytes + 1)
+        except urllib.error.HTTPError as exc:
+            error = "The board answered HTTP %d for %s." % (exc.code, urllib.parse.urlsplit(url).path)
+            if exc.code == 404:
+                continue                               # older firmware: try the next address
+            return False, error, url
+        except (OSError, urllib.error.URLError, ValueError) as exc:
+            reason = getattr(exc, "reason", exc)
+            return False, "Could not reach the board at %s (%s)." % (normalize_board_host(host), reason), url
+        if len(raw) > max_bytes:
+            raw = raw[-max_bytes:]                      # keep the newest part; the oldest rows are the least useful
+            raw = raw[raw.find(b"\n") + 1:] if b"\n" in raw else raw
+        return True, raw.decode("utf-8", "replace"), url
+    return False, error or "The board did not answer.", urls[-1]
 
 
 _NUMBER = re.compile(r"^-?\d+(\.\d+)?$")
@@ -1317,13 +1334,20 @@ class Daemon:
         c = self.cfg
         host = c["people_host"]
         now = time.time()
-        ok, payload = fetch_board_csv(host)
+        last_ts = float(self.store.meta_get("people_last_ts", 0) or 0)
+        if test:
+            since = now - 86400                         # just enough to show what the board sends
+        elif last_ts:
+            since = last_ts - 900                       # small overlap; duplicates are ignored
+        else:
+            since = now - max(c["sync_days"], 7) * 86400   # first check: catch up on the last week
+        ok, payload, url = fetch_board_csv(host, since)
         info = self.people
         info["last_poll"] = int(now)
         if not ok:
             info.update(ok=False, error=payload, fails=info["fails"] + 1)
             if test:
-                self.people_test = {"ts": int(now), "ok": False, "message": payload, "lines": []}
+                self.people_test = {"ts": int(now), "ok": False, "message": payload, "lines": [], "url": url}
             log.warning("Crowd board: %s", payload)
             return False, payload
         parsed = parse_board_csv(payload, c["people_time_col"], c["people_count_col"], c["people_clock"])
@@ -1337,7 +1361,7 @@ class Daemon:
         detail = {"ts": int(now), "ok": parsed["ok"], "lines": parsed["lines"], "rows": parsed["total_rows"],
                   "time_col": colname(parsed["time_col"]) + (" + next column" if parsed["combined"] else ""),
                   "count_col": colname(parsed["count_col"]), "delimiter": parsed["delimiter"],
-                  "clock": c["people_clock"], "message": ""}
+                  "clock": c["people_clock"], "message": "", "url": url}
         if not parsed["ok"]:
             info.update(ok=False, error=parsed["error"], fails=info["fails"] + 1)
             detail["message"] = parsed["error"]
@@ -1362,7 +1386,6 @@ class Daemon:
         msg = "Board OK: %d rows, newest reading %d device(s) at %s." % (
             parsed["total_rows"], latest_count, datetime.datetime.fromtimestamp(latest_ts).strftime("%Y-%m-%d %H:%M:%S"))
         if not test:
-            last_ts = float(self.store.meta_get("people_last_ts", 0) or 0)
             floor = now - 90 * 86400
             new = [(t, cnt) for t, cnt in rows if t > last_ts and t >= floor and t <= now + 3600]
             batch = []
