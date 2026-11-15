@@ -175,7 +175,7 @@ class PollTests(unittest.TestCase):
             "schedules": [{"days": list(range(7)), "start": "17:00", "end": "22:00"}],
         }, 0o600)
         self.d = cc.Daemon(self.paths)
-        self.today = datetime.date.today() - datetime.timedelta(days=1)   # fixed evening readings must be in the past
+        self.today = datetime.date.today()
 
     def tearDown(self):
         self.board.close()

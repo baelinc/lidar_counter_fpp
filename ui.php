@@ -1,6 +1,5 @@
 <?php
-/* Car Counter - main page (shown inside FPP's normal page frame, or inside standalone/web/index.php). */
-require_once __DIR__ . '/lib.php';
+/* Car Counter - main page (shown inside FPP's normal page frame). */
 $ccPlugin = basename(__DIR__);
 ?>
 <style>
@@ -55,16 +54,6 @@ $ccPlugin = basename(__DIR__);
 #cc .sched-row input[type=time] { padding: .3rem .4rem; width: 8.5rem; max-width: 8.5rem; }
 #cc .sched-quick button { border: 0; background: none; color: #1f6feb; cursor: pointer; font-size: .8rem; padding: 0 .3rem; }
 #cc .sched-del { margin-left: auto; }
-#cc .setup-item { display: flex; align-items: center; gap: .8rem; padding: .55rem 0; border-bottom: 1px solid var(--line); }
-#cc .setup-item:last-child { border-bottom: 0; }
-#cc .setup-ico { flex: none; width: 1.7rem; height: 1.7rem; border-radius: 50%; border: 2px solid var(--line); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: .95rem; }
-#cc .setup-item.done .setup-ico { background: var(--accent); border-color: var(--accent); color: #fff; }
-#cc .setup-txt { flex: 1; min-width: 0; }
-#cc .setup-txt b { display: block; }
-#cc .setup-txt span { font-size: .85rem; opacity: .7; }
-#cc .lane-now { font-size: 2.2rem; font-weight: 700; line-height: 1.1; }
-#cc .lane-step { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin: .7rem 0; }
-#cc .lane-val { font-weight: 700; min-width: 5rem; }
 @media (max-width: 700px) { #cc .field { grid-template-columns: 1fr; } }
 </style>
 
@@ -88,11 +77,6 @@ $ccPlugin = basename(__DIR__);
 
   <!-- ===================== Dashboard ===================== -->
   <div id="tab-dash">
-    <div class="panel" id="setupBox" style="display:none">
-      <h3>Let’s get you set up</h3>
-      <div id="setupList"></div>
-      <div class="row"><button class="b" id="setupHide">Hide this</button></div>
-    </div>
     <div class="grid">
       <div class="card"><div class="sub" id="tonightLabel">Tonight</div><div class="big" id="vTonight">–</div><div class="sub" id="vTonightSub"></div></div>
       <div class="card"><div class="sub">Last night</div><div class="big" id="vLast">–</div><div class="sub" id="vLastSub"></div></div>
@@ -153,19 +137,11 @@ $ccPlugin = basename(__DIR__);
         <tr><td>White (lidar RX)</td><td>Pin 8 (GPIO14 / TXD)</td></tr>
       </tbody></table>
       <div class="help" style="opacity:.9;margin-top:.5rem">
-        First time using the GPIO serial port? <?php if (CC_STANDALONE) { ?>Run <code>sudo /opt/car-counter/scripts/enable_uart.sh</code> over SSH once and reboot (or re-run the installer with <code>--uart</code>).<?php } else { ?>Run <code>sudo /home/fpp/media/plugins/<?php echo htmlspecialchars($ccPlugin); ?>/scripts/enable_uart.sh</code> over SSH once and reboot.<?php } ?>
+        First time using the GPIO serial port? Run <code>sudo /home/fpp/media/plugins/<?php echo htmlspecialchars($ccPlugin); ?>/scripts/enable_uart.sh</code> over SSH once and reboot.
         If an LED-panel HAT or bonnet uses these GPIO pins, use a USB-to-serial adapter instead.
       </div>
     </div>
     <div class="panel"><h3>Sensor</h3><div id="fSensor"></div></div>
-    <div class="panel" id="laneHelper"><h3>Count only one lane (optional)</h3>
-      <div class="help" style="opacity:.9">On a two-way road, cars arriving pass in one lane and cars leaving pass in the other. Aim the sensor across the road, then let it ignore the lane nearest to it, so each car is counted once instead of twice. Two quick steps:</div>
-      <div class="lane-step"><span>Live reading</span><span class="lane-now" id="laneNow">–</span></div>
-      <div class="lane-step"><span><b>1.</b> Put a car (or yourself) in the lane <b>nearest</b> the sensor, hold still, then</span><button class="b" id="laneNear">Record near lane</button><span class="lane-val" id="laneNearV"></span></div>
-      <div class="lane-step"><span><b>2.</b> Do the same in the <b>far</b> lane, then</span><button class="b" id="laneFar">Record far lane</button><span class="lane-val" id="laneFarV"></span></div>
-      <div class="msg" id="laneMsg"></div>
-      <div class="row"><button class="b primary" id="laneApply" disabled>Use these settings</button><button class="b" id="laneReset">Count both lanes again</button></div>
-    </div>
     <div class="panel"><h3>Detection</h3><div id="fDetect"></div></div>
     <div class="panel"><h3>When to count</h3><div id="fSched"></div></div>
     <div class="row"><button class="b primary" id="btnSaveSettings">Save settings</button><span class="msg" id="saveMsg1"></span></div>
@@ -266,8 +242,7 @@ $ccPlugin = basename(__DIR__);
     ],
     fSched: [
       { k: 'schedule_mode', l: 'Count cars', t: 'select', o: [['window', 'During the show schedule (below)'], ['playing', 'Only while FPP is playing'], ['always', 'Always']], h: 'Detections outside the schedule are kept as “off-hours” so you can see them, but are not added to your totals.' },
-      { k: 'fpp_host', l: 'Falcon Player address', t: 'text', h: '<?php echo CC_STANDALONE ? 'Required for this mode: the IP address of your master Falcon Player, e.g. 192.168.1.50.' : 'Leave blank to use this Pi. Or enter the address of another Falcon Player to follow that one.'; ?> If it cannot be reached the show schedule below is used instead.' },
-      { k: 'schedules', l: 'Show schedule', t: 'schedules', h: 'Used in “During the show schedule” mode, and as the backup when the Falcon Player cannot be reached. Add one entry per set of days with the same hours (e.g. Sun–Thu 5:30 PM–10:00 PM, and Fri–Sat 5:30 PM–11:00 PM). An end time earlier than the start time runs past midnight and counts as part of the day it started.' },
+      { k: 'schedules', l: 'Show schedule', t: 'schedules', h: 'Add one entry per set of days with the same hours (e.g. Sun–Thu 5:30 PM–10:00 PM, and Fri–Sat 5:30 PM–11:00 PM). An end time earlier than the start time runs past midnight and counts as part of the day it started.' },
       { k: 'grace_min', l: 'Grace period (min)', t: 'number', h: '“Only while FPP is playing” mode: keep counting this long after the show stops.' },
       { k: 'rollover_hour', l: 'New night starts at', t: 'number', h: 'Hour (0–12). Cars counted after midnight still belong to the previous show night until this hour.' }
     ],
@@ -357,8 +332,7 @@ $ccPlugin = basename(__DIR__);
     $('wireGpio').style.display = (m === 'gpio') ? '' : 'none';
   }
   function applyModeVisibility() {
-    var f = $('schedField'); if (f) f.style.display = ($('cf_schedule_mode').value !== 'always') ? '' : 'none';
-    var h = $('row_fpp_host'); if (h) h.style.display = ($('cf_schedule_mode').value === 'playing') ? '' : 'none';
+    var f = $('schedField'); if (f) f.style.display = ($('cf_schedule_mode').value === 'window') ? '' : 'none';
   }
   function buildForm(boxId) {
     var box = $(boxId);
@@ -433,7 +407,7 @@ $ccPlugin = basename(__DIR__);
     return api('save_config', collect(boxes)).then(function (r) {
       setMsg(msgEl, r.ok ? 'Saved – the counter picks this up within a second.' : (r.error || 'Save failed'), r.ok);
       return api('config').then(function (c) { cfg = c; fillForms(); return r.ok; });
-    }).catch(function () { setMsg(msgEl, 'Save failed (could not reach the counter).', false); });
+    }).catch(function () { setMsg(msgEl, 'Save failed (could not reach FPP).', false); });
   }
   $('btnSaveSettings').onclick = function () { save(['fSensor', 'fDetect', 'fSched'], $('saveMsg1')); };
   $('btnSaveWeb').onclick = function () { save(['fWebsite'], $('saveMsg2')); };
@@ -457,7 +431,7 @@ $ccPlugin = basename(__DIR__);
           if (++tries < 40) setTimeout(poll, 700); else setMsg(msgEl, 'No response from the counter service.', false);
         });
       })();
-    }).catch(function () { setMsg(msgEl, 'Could not reach the counter.', false); });
+    }).catch(function () { setMsg(msgEl, 'Could not reach FPP.', false); });
   }
   $('btnPlus').onclick = function () { sendCommand({ cmd: 'adjust', delta: 1 }, $('cmdMsg')); };
   $('btnMinus').onclick = function () { sendCommand({ cmd: 'adjust', delta: -1 }, $('cmdMsg')); };
@@ -537,7 +511,6 @@ $ccPlugin = basename(__DIR__);
 
     var d = s.detector, dist = s.sensor.distance_cm;
     $('vDist').textContent = dist === null ? 'no return' : dist + ' cm';
-    $('laneNow').textContent = dist === null ? 'no return' : dist + ' cm';
     var st = $('vState'); st.textContent = s.calibrating ? 'calibrating' : d.state; st.className = 'pill ' + (d.state === 'present' ? 'ok' : (d.state === 'confirming' ? 'warn' : ''));
     $('vSensorDetail').textContent = 'signal ' + s.sensor.strength + (s.test_mode ? ' · test cars: ' + s.test_count : '');
     var scale = Math.max(d.max_cm * 1.3, 400);
@@ -619,107 +592,20 @@ $ccPlugin = basename(__DIR__);
     $('vLastSub').textContent = prev ? prev.date : '';
   }
 
-
-  // ---- Setup checklist ---------------------------------------------------
-  var STANDALONE = <?php echo CC_STANDALONE ? 'true' : 'false'; ?>;
-  function gotoTab(t) { var b = document.querySelector('#tabs [data-tab="' + t + '"]'); if (b) b.click(); }
-  function setupHidden() { try { return localStorage.getItem('ccSetupHidden') === '1'; } catch (e) { return false; } }
-  $('setupHide').onclick = function () { try { localStorage.setItem('ccSetupHidden', '1'); } catch (e) {} $('setupBox').style.display = 'none'; };
-  function renderSetup() {
-    if (!cfg) return;
-    var sensorOk = !!(running && status && status.sensor && status.sensor.ok);
-    var web = !!(cfg.sync_enabled && cfg.wp_url && cfg.secret_set);
-    var items = [
-      { done: sensorOk, req: true, t: 'Connect the lidar sensor', d: sensorOk ? 'Sensor is sending readings.' : 'Plug it in and choose how it is connected.', tab: 'settings' },
-      { done: !!(cfg.schedules && cfg.schedules.length) || cfg.schedule_mode === 'always', req: false, t: 'Set your show hours', d: 'Cars are only counted during these hours.', tab: 'settings' },
-      { done: cfg.min_cm > 30, req: false, t: 'Count only one lane (optional)', d: 'Avoids counting cars twice on a two-way road.', tab: 'settings' },
-      { done: web, req: true, t: 'Connect to your website', d: web ? 'Uploading to ' + cfg.wp_url + '.' : 'Enter your website address and secret.', tab: 'website' }
-    ];
-    if (STANDALONE) items.push({ done: cfg.schedule_mode === 'playing' && !!cfg.fpp_host, req: false, t: 'Follow your Falcon Player (optional)', d: 'Only count while your show is playing.', tab: 'settings' });
-    items.push({ done: !!(cfg.people_enabled && cfg.people_host), req: false, t: 'Count phones with a BaldrickSignals board (optional)', d: 'Estimates how many people are watching.', tab: 'people' });
-    var box = $('setupList'); box.textContent = '';
-    items.forEach(function (it) {
-      var row = document.createElement('div'); row.className = 'setup-item' + (it.done ? ' done' : '');
-      var ico = document.createElement('div'); ico.className = 'setup-ico'; ico.textContent = it.done ? '✓' : '';
-      var txt = document.createElement('div'); txt.className = 'setup-txt';
-      var b = document.createElement('b'); b.textContent = it.t; var sp = document.createElement('span'); sp.textContent = it.d;
-      txt.appendChild(b); txt.appendChild(sp);
-      row.appendChild(ico); row.appendChild(txt);
-      if (!it.done) { var go = document.createElement('button'); go.className = 'b'; go.textContent = 'Set up'; go.onclick = function () { gotoTab(it.tab); }; row.appendChild(go); }
-      box.appendChild(row);
-    });
-    var needed = items.some(function (it) { return it.req && !it.done; });
-    $('setupBox').style.display = (needed && !setupHidden()) ? '' : 'none';
-  }
-
-  // ---- One-lane helper ----------------------------------------------------
-  var laneNear = null, laneFar = null;
-  function sampleDistance(n) {
-    var vals = [];
-    function one(i) {
-      return api('status').then(function (r) {
-        var d = r.status && r.status.sensor ? r.status.sensor.distance_cm : null;
-        if (d !== null && d !== undefined) vals.push(d);
-      }).then(function () {
-        if (i + 1 >= n) return vals;
-        return new Promise(function (res) { setTimeout(res, 250); }).then(function () { return one(i + 1); });
-      });
-    }
-    return one(0).then(function (v) {
-      if (v.length < Math.ceil(n / 2)) return null;
-      v.sort(function (a, b) { return a - b; }); return v[Math.floor(v.length / 2)];
-    });
-  }
-  function laneUpdate() {
-    $('laneNearV').textContent = laneNear === null ? '' : laneNear + ' cm';
-    $('laneFarV').textContent = laneFar === null ? '' : laneFar + ' cm';
-    var ok = laneNear !== null && laneFar !== null && laneFar >= laneNear + 30;
-    $('laneApply').disabled = !ok;
-    var m = $('laneMsg');
-    if (laneNear !== null && laneFar !== null && !ok) setMsg(m, 'The two readings are too close together – check the near lane is really closer to the sensor than the far lane.', false);
-    else if (ok) setMsg(m, 'Cars closer than ' + Math.round((laneNear + laneFar) / 2) + ' cm (the near lane) will be ignored; cars farther out will be counted.', true);
-  }
-  function laneRecord(which) {
-    var m = $('laneMsg'); setMsg(m, 'Reading… hold still for a moment.', true);
-    sampleDistance(5).then(function (v) {
-      if (v === null) { setMsg(m, 'The sensor sees nothing there. Put a car or person in that lane, hold still and try again.', false); return; }
-      if (which === 'near') laneNear = v; else laneFar = v;
-      laneUpdate();
-    });
-  }
-  $('laneNear').onclick = function () { laneRecord('near'); };
-  $('laneFar').onclick = function () { laneRecord('far'); };
-  $('laneApply').onclick = function () {
-    var min = Math.round((laneNear + laneFar) / 2), max = cfg.max_cm;
-    if (max < laneFar + 50) max = laneFar + 150;
-    api('save_config', { min_cm: min, max_cm: max }).then(function (r) {
-      setMsg($('laneMsg'), r.ok ? 'Saved: nearest ' + min + ' cm, farthest ' + max + ' cm. Drive a car through each way to check it counts once.' : (r.error || 'Save failed'), r.ok);
-      return api('config').then(function (c) { cfg = c; fillForms(); renderSetup(); });
-    });
-  };
-  $('laneReset').onclick = function () {
-    api('save_config', { min_cm: 30 }).then(function (r) {
-      laneNear = laneFar = null; laneUpdate();
-      setMsg($('laneMsg'), r.ok ? 'Both lanes will be counted again (nearest distance set back to 30 cm).' : 'Save failed', r.ok);
-      return api('config').then(function (c) { cfg = c; fillForms(); renderSetup(); });
-    });
-  };
-
   function refresh() {
-    return api('status').then(function (r) { running = r.running; status = r.status; renderStatus(); renderStats(); renderSetup(); }).catch(function () {
+    return api('status').then(function (r) { running = r.running; status = r.status; renderStatus(); renderStats(); }).catch(function () {
       running = false; renderStatus();
     });
   }
   function refreshStats() { api('stats').then(function (s) { stats = s; renderStats(); renderStatus(); }); }
 
   $('csvLink').href = AJAX + '&action=csv';
-  api('config').then(function (c) { cfg = c; fillForms(); renderSetup(); });
+  api('config').then(function (c) { cfg = c; fillForms(); });
   api('ports').then(function (p) {
     portInfo = p; dl.textContent = '';
     (p.all || []).forEach(function (x) { var o = document.createElement('option'); o.value = x; dl.appendChild(o); });
     populateUsb();
   });
-  (function () { var h = (location.hash || '').replace('#', ''); if (h) gotoTab(h); })();
   refreshStats(); refresh();
   setInterval(refresh, 1000);
   setInterval(refreshStats, 15000);
